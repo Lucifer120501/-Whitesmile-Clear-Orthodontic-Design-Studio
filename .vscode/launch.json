@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Server (tsx)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx"],
+      "program": "${workspaceFolder}/server.ts",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env.local",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "🧊 Debug Blender STL Processor",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/blender/main.py",
+      "args": [
+        "--input", "${workspaceFolder}/uploads/sample.stl",
+        "--output", "${workspaceFolder}/uploads/sample_processed.stl",
+        "--timeout", "600"
+      ],
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/.env"
+    }
+  ]
+}

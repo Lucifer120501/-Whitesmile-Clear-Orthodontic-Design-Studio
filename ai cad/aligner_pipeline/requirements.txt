@@ -1,0 +1,20 @@
+# Clear Aligner AI Pipeline — Python Dependencies
+# =================================================
+# Install: pip install -r requirements.txt
+# For full functionality (mesh visualization): pip install -r requirements.txt[full]
+
+# Core
+numpy>=1.21.0
+trimesh[all]>=4.0.0
+
+# Optional: Mesh curvature computation
+# scipy is a dependency of trimesh[all] but listed for clarity
+scipy>=1.7.0
+
+# Optional: Visualization & debugging
+# matplotlib>=3.5.0
+# pyvista>=0.38.0
+
+# Optional: Neural segmentation models (Phase 1)
+# torch>=1.13.0
+# torchvision>=0.14.0

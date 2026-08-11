@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Whitesmile Clear — Aligner Staging &amp; Render</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;color:#334155;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  .status-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600}
+  .status-online{background:#ecfdf5;color:#059669;border:1px solid #a7f3d0}
+  .status-offline{background:#fffbeb;color:#d97706;border:1px solid #fde68a}
+  /* Thin auto-pipeline viewer */
+  .thin-view{flex:1;display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px;overflow-y:auto}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:18px 22px;width:100%;max-width:620px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
+  .card h2{font-size:14px;color:#46c0bd;margin-bottom:12px}
+  .status-line{display:flex;align-items:center;gap:8px;font-size:13px;color:#0f172a}
+  .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .dot.on{background:#059669}
+  .dot.off{background:#d97706}
+  .dot.checking{background:#94a3b8;animation:pulse 1.2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .cfg-grid,.auto-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;color:#334155}
+  .cfg-item,.auto-item{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px}
+  .cfg-item .lbl,.auto-item .lbl{display:block;font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:2px}
+  .cfg-item .val,.auto-item .val{font-size:13px;font-weight:600;color:#0f172a;word-break:break-all}
+  .auto-item.wide{grid-column:1 / -1}
+  .auto-item .val.ready{color:#059669}
+  .auto-item .val.waiting{color:#d97706}
+  .note{font-size:11px;color:#64748b;margin-top:12px}
+  .flow{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:11px;font-weight:600;color:#64748b;flex-wrap:wrap}
+  .flow .step{background:#ecfdf5;border:1px solid #a7f3d0;color:#059669;padding:3px 8px;border-radius:999px}
+  .flow .step.done{background:#d1fae5}
+  .flow .step.active{background:#46c0bd;color:#fff;animation:pulse 1.2s infinite}
+  #runBtn,#restageBtn{width:100%;padding:12px;border:none;border-radius:10px;background:#46c0bd;color:#fff;font-size:14px;font-weight:700;cursor:pointer;transition:.15s}
+  #runBtn:hover:not(:disabled),#restageBtn:hover:not(:disabled){background:#3ba6a3}
+  #runBtn:disabled,#restageBtn:disabled{background:#cbd5e1;color:#94a3b8;cursor:not-allowed}
+  .log-box{margin-top:12px;background:#0d0d1a;border-radius:8px;padding:8px 10px;max-height:160px;overflow-y:auto;font-family:'Cascadia Code','Fira Code',monospace;font-size:11px;line-height:1.5}
+  .log-box .l{color:#94a3b8;white-space:pre-wrap;word-break:break-all}
+  .log-box .l.ok{color:#2ecc71}
+  .log-box .l.err{color:#e45}
+  /* Tooth grid editor */
+  .tooth-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:5px}
+  .tooth-chip{padding:6px 0;text-align:center;border-radius:7px;background:#f1f5f9;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;color:#475569;border:1px solid #e2e8f0}
+  .tooth-chip:hover{background:#e2e8f0}
+  .tooth-chip.active{background:#46c0bd;color:#fff;border-color:#3ba6a3}
+  .btn-half{flex:1;padding:10px;border:none;border-radius:10px;background:#38a5a2;color:#fff;font-size:13px;font-weight:700;cursor:pointer;transition:.15s}
+  .btn-half:hover{background:#2f8684}
+  /* Modal */
+  .modal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:100;align-items:center;justify-content:center}
+  .modal.open{display:flex}
+  .modal-content{background:#fff;border-radius:12px;padding:20px;min-width:340px;max-width:420px;box-shadow:0 20px 60px rgba(15,23,42,.3)}
+  .modal-content h2{margin-bottom:12px;color:#0f172a;font-size:15px}
+  .form-row{display:flex;gap:8px;margin-bottom:8px}
+  .form-row>div{flex:1}
+  .form-row label,.modal-content label{display:block;font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:2px}
+  .form-row input,.modal-content select,.modal-content input{width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;color:#334155}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+  .modal-actions button{padding:8px 16px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+  .modal-actions .btn-cancel{background:#f1f5f9;color:#64748b}
+  .modal-actions .btn-save{background:#46c0bd;color:#fff}
+  /* 3D Design Viewer — separate container docked at the bottom */
+  .viewer-section{flex-shrink:0;height:42vh;min-height:300px;background:#fff;border-top:2px solid #e2e8f0;box-shadow:0 -4px 16px rgba(15,23,42,.06);padding:14px 20px;display:flex;flex-direction:column}
+  .viewer-section .viewer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+  .viewer-section h2{font-size:14px;color:#46c0bd}
+  .viewer-section .note{margin-top:2px}
+  .viewer-actions{display:flex;gap:8px;flex-shrink:0}
+  .btn-small{padding:6px 12px;border:none;border-radius:8px;background:#f1f5f9;color:#475569;font-size:11px;font-weight:700;cursor:pointer;transition:.15s}
+  .btn-small:hover{background:#e2e8f0}
+  .btn-small.primary{background:#46c0bd;color:#fff}
+  .btn-small.primary:hover{background:#3ba6a3}
+  .btn-small.danger{background:#e11d48;color:#fff}
+  .btn-small.danger:hover{background:#b91c1c}
+  .viewer-timeline{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-shrink:0}
+  .viewer-timeline .stage-label{font-size:12px;min-width:70px;color:#64748b;white-space:nowrap}
+  .viewer-timeline input[type=range]{flex:1;accent-color:#46c0bd;height:4px;min-width:60px}
+  .viewer-tools{display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-shrink:0;flex-wrap:wrap}
+  .viewer-tools .tool-label{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase}
+  .viewer-tools .tool-sep{width:1px;height:18px;background:#e2e8f0;margin:0 6px}
+  .btn-small.tool.active{background:#46c0bd;color:#fff}
+  .viewer-section.fullpage{position:fixed;inset:0;width:100vw;height:100vh;z-index:50;padding:16px 20px;border:none;border-radius:0;box-shadow:none}
+  .viewer-section.fullpage #viewport{flex:1;min-height:0;border-radius:0}
+  #viewport{position:relative;flex:1;min-height:0;background:#0d0d1a;border-radius:10px;overflow:hidden}
+  #viewport canvas{display:block;width:100%!important;height:100%!important}
+  .viewport-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.45);font-size:13px;text-align:center;padding:20px}
+  .viewport-overlay{position:absolute;bottom:10px;left:12px;font-size:11px;color:rgba(255,255,255,.5);pointer-events:none}
+  /* 3D Design Editor — Blender-style tools panel overlay */
+  .viewer-editbar{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap}
+  .viewer-editbar .edit-status{font-size:11px;color:#64748b}
+  #editorPanel{position:absolute;top:10px;right:10px;z-index:30;background:rgba(13,13,26,.94);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:10px 12px;width:230px;color:#e2e8f0;font-size:11px;box-shadow:0 10px 30px rgba(0,0,0,.4);display:none}
+  #editorPanel .ep-title{font-size:12px;font-weight:700;color:#46c0bd;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between}
+  #editorPanel .ep-row{display:flex;gap:6px;margin-bottom:6px;align-items:center}
+  #editorPanel .ep-row label{width:34px;font-size:9px;text-transform:uppercase;font-weight:700;color:#94a3b8;flex-shrink:0}
+  #editorPanel input[type=number]{width:100%;padding:4px 6px;border:1px solid rgba(255,255,255,.15);border-radius:5px;background:rgba(255,255,255,.06);color:#e2e8f0;font-size:11px;font-family:inherit}
+  #editorPanel select{width:100%;padding:4px 6px;border:1px solid rgba(255,255,255,.15);border-radius:5px;background:#1e293b;color:#e2e8f0;font-size:11px}
+  #editorPanel .gizmo-modes{display:flex;gap:4px;margin-bottom:8px}
+  #editorPanel .gizmo-modes button{flex:1;padding:5px 0;border:1px solid rgba(255,255,255,.15);border-radius:6px;background:rgba(255,255,255,.05);color:#cbd5e1;font-size:10px;font-weight:700;cursor:pointer;transition:.12s}
+  #editorPanel .gizmo-modes button.active{background:#46c0bd;color:#fff;border-color:#3ba6a3}
+  #editorPanel .ep-actions{display:flex;gap:6px;margin-top:8px}
+  #editorPanel .ep-actions button{flex:1;padding:7px 0;border:none;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer;transition:.12s}
+  #editorPanel .ep-save{background:#46c0bd;color:#fff}
+  #editorPanel .ep-save:hover{background:#3ba6a3}
+  #editorPanel .ep-render{background:#38a5a2;color:#fff}
+  #editorPanel .ep-render:hover{background:#2f8684}
+  #editorPanel .ep-hint{font-size:10px;color:#64748b;margin-top:6px;line-height:1.4}
+  #editorPanel .ep-close{background:none;border:none;color:#94a3b8;cursor:pointer;font-size:13px;padding:0 2px}
+  .tooth-select-ring{pointer-events:none;position:absolute;inset:0;border:2px solid #46c0bd;border-radius:8px;box-shadow:0 0 0 1px rgba(70,192,189,.3),0 0 18px rgba(70,192,189,.5);display:none;z-index:20}
+  .viewer-section:fullscreen{width:100vw;height:100vh;padding:16px 20px;border:none}
+  .viewer-section:fullscreen #viewport{flex:1;min-height:0;border-radius:0}
+  @media(max-width:520px){.cfg-grid,.auto-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<!-- Thin auto-pipeline viewer -->
+<main class="thin-view">
+  <div class="card">
+    <h2>Connection</h2>
+    <div class="status-line">
+      <span id="connDot" class="dot checking"></span>
+      <span id="connText">Connecting to the WhiteSmile main system…</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Shared Pipeline Configuration</h2>
+    <div class="cfg-grid">
+      <div class="cfg-item"><span class="lbl">Shared Storage</span><span class="val" id="sharedStorage">—</span></div>
+      <div class="cfg-item"><span class="lbl">Stages</span><span class="val" id="sharedStages">—</span></div>
+      <div class="cfg-item"><span class="lbl">Expansion</span><span class="val" id="sharedExpansion">—</span></div>
+      <div class="cfg-item"><span class="lbl">Shell (mm)</span><span class="val" id="sharedShellThickness">—</span></div>
+      <div class="cfg-item"><span class="lbl">Undercut (°)</span><span class="val" id="sharedUndercutAngle">—</span></div>
+    </div>
+    <p class="note">Managed by the WhiteSmile main system. Applied automatically to every plan.</p>
+  </div>
+
+  <div class="card">
+    <h2>Auto Pipeline</h2>
+    <div class="flow">
+      <span class="step" id="flow1">Main System · Treatment Plan</span>
+      <span>→</span>
+      <span class="step" id="flow2">Agliner · Segmentation</span>
+      <span>→</span>
+      <span class="step" id="flow3">Ortho · Aligner Design</span>
+    </div>
+    <div class="auto-grid">
+      <div class="auto-item wide"><span class="lbl">Segmented Case (from Agliner)</span><span class="val waiting" id="autoCase">Waiting for segmented case…</span></div>
+      <div class="auto-item"><span class="lbl">Teeth</span><span class="val" id="autoTeeth">—</span></div>
+      <div class="auto-item wide"><span class="lbl">Treatment Plan (from Main System)</span><span class="val waiting" id="autoRx">Waiting for treatment plan…</span></div>
+    </div>
+    <p class="note" id="autoStatusNote">Waiting for a segmented case and a treatment plan. Upload patient data in the main system, then run Agliner — this panel picks everything up automatically.</p>
+    <div style="height:1px;background:#e2e8f0;margin:12px 0"></div>
+    <button id="runBtn" disabled>Run Auto Pipeline</button>
+    <div class="log-box" id="autoLog"></div>
+  </div>
+
+  <!-- Edit Design (appears once a plan exists) -->
+  <div class="card" id="editCard" style="display:none">
+    <h2>Edit Design</h2>
+    <div class="auto-grid">
+      <div class="auto-item wide"><span class="lbl">Plan</span><span class="val" id="editPlanName">—</span></div>
+      <div class="auto-item wide"><span class="lbl">Teeth — click a tooth to edit its final movement (mm / °) and attachment</span><span class="val" id="editTeethGrid"></span></div>
+    </div>
+    <p class="note">Edits are saved to the plan, then "Apply &amp; Re-render" recomputes staging and regenerates the aligner design in Blender.</p>
+    <div style="height:1px;background:#e2e8f0;margin:12px 0"></div>
+    <div style="display:flex;gap:8px">
+      <button id="restageBtn" onclick="restageAndRender()">Apply &amp; Re-render</button>
+    </div>
+  </div>
+</main>
+
+<!-- 3D Design Viewer — separate container docked at the bottom -->
+<section class="viewer-section" id="viewerCard" style="display:none">
+  <div class="viewer-head">
+    <div>
+      <h2>Design Viewer</h2>
+      <p class="note">View the staged aligner design, play through stages, and record the animation.</p>
+    </div>
+    <div class="viewer-actions">
+      <button class="btn-small" onclick="toggleEditMode()" id="editModeBtn">&#x270E; Edit</button>
+      <button class="btn-small" onclick="openViewerWindow()" id="openViewerBtn">&#x26F6; Open Viewer</button>
+      <button class="btn-small primary" onclick="toggleViewerFullscreen()" id="fullscreenBtn">&#x26F6; Full Screen</button>
+    </div>
+  </div>
+  <div class="viewer-timeline">
+    <button class="btn-small" onclick="playTimeline()" id="playBtn">Play</button>
+    <span class="stage-label">Stage: <span id="stageLabel">0</span></span>
+    <input type="range" id="timeline" min="0" max="0" value="0" oninput="onTimelineChange(this.value)">
+    <button class="btn-small" id="recordBtn" onclick="toggleRecording()">Record</button>
+  </div>
+  <div class="viewer-tools">
+    <span class="tool-label">Jaw:</span>
+    <button class="btn-small tool active" data-jaw="all" onclick="setViewerJaw('all', this)">All</button>
+    <button class="btn-small tool" data-jaw="upper" onclick="setViewerJaw('upper', this)">Upper</button>
+    <button class="btn-small tool" data-jaw="lower" onclick="setViewerJaw('lower', this)">Lower</button>
+    <span class="tool-sep"></span>
+    <span class="tool-label">View:</span>
+    <button class="btn-small tool active" data-view="front" onclick="setViewerView('front', this)">Front</button>
+    <button class="btn-small tool" data-view="top" onclick="setViewerView('top', this)">Top</button>
+    <button class="btn-small tool" data-view="side" onclick="setViewerView('side', this)">Side</button>
+  </div>
+  <div id="viewport">
+    <div class="viewport-hint">No rendered stages yet - run the pipeline first.</div>
+    <!-- Blender-style editor panel (shown in edit mode) -->
+    <div id="editorPanel">
+      <div class="ep-title">Edit Tooth <span id="epToothNum">—</span>
+        <button class="ep-close" onclick="closeEditorPanel()" title="Close">&#x2715;</button>
+      </div>
+      <div class="gizmo-modes">
+        <button id="gizmoMoveBtn" class="active" onclick="setGizmoMode('translate')">Move</button>
+        <button id="gizmoRotateBtn" onclick="setGizmoMode('rotate')">Rotate</button>
+      </div>
+      <div class="ep-row"><label>TX</label><input type="number" id="epTx" step="0.1" value="0" oninput="onEditFieldChange()"></div>
+      <div class="ep-row"><label>TY</label><input type="number" id="epTy" step="0.1" value="0" oninput="onEditFieldChange()"></div>
+      <div class="ep-row"><label>TZ</label><input type="number" id="epTz" step="0.1" value="0" oninput="onEditFieldChange()"></div>
+      <div class="ep-row"><label>RX</label><input type="number" id="epRx" step="0.5" value="0" oninput="onEditFieldChange()"></div>
+      <div class="ep-row"><label>RY</label><input type="number" id="epRy" step="0.5" value="0" oninput="onEditFieldChange()"></div>
+      <div class="ep-row"><label>RZ</label><input type="number" id="epRz" step="0.5" value="0" oninput="onEditFieldChange()"></div>
+      <div class="ep-row"><label>Attach</label>
+        <select id="epAttachment" onchange="onEditFieldChange()">
+          <option value="">None</option>
+          <option value="ellipsoid">Ellipsoid</option>
+          <option value="beveled">Beveled</option>
+        </select>
+      </div>
+      <div class="ep-actions">
+        <button class="ep-save" onclick="saveEditorTooth()">Save</button>
+        <button class="ep-render" onclick="restageAndRender()">Apply &amp; Re-render</button>
+      </div>
+      <div class="ep-hint">Click a tooth in the viewport to select it. Drag the gizmo to move/rotate. Save writes to the plan, then re-render regenerates all stages in Blender.</div>
+    </div>
+  </div>
+</section>
+
+<!-- Tooth Editor Modal -->
+<div class="modal" id="toothModal">
+  <div class="modal-content">
+    <h2>Tooth <span id="editToothNumber"></span></h2>
+    <div class="form-row">
+      <div><label>TX (mm)</label><input type="number" id="editTx" step="0.1" value="0"></div>
+      <div><label>TY (mm)</label><input type="number" id="editTy" step="0.1" value="0"></div>
+      <div><label>TZ (mm)</label><input type="number" id="editTz" step="0.1" value="0"></div>
+    </div>
+    <div class="form-row">
+      <div><label>RX (°)</label><input type="number" id="editRx" step="0.5" value="0"></div>
+      <div><label>RY (°)</label><input type="number" id="editRy" step="0.5" value="0"></div>
+      <div><label>RZ (°)</label><input type="number" id="editRz" step="0.5" value="0"></div>
+    </div>
+    <label style="margin-bottom:2px">Attachment</label>
+    <select id="editAttachment">
+      <option value="">None</option>
+      <option value="ellipsoid">Ellipsoid</option>
+      <option value="beveled">Beveled</option>
+    </select>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeToothModal()">Cancel</button>
+      <button class="btn-save" onclick="saveToothEdit()">Save Movement</button>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+// ---- 3D Design Viewer (Three.js) ----
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+const ORTHO_BASE = window.ORTHO_BASE || '';
+const viewportEl = document.getElementById('viewport');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0d1a);
+
+const camera = new THREE.PerspectiveCamera(35, Math.max(viewportEl.clientWidth, 1) / Math.max(viewportEl.clientHeight, 1), 0.1, 1000);
+camera.position.set(0, -120, 60);
+// The model's vertical axis is Z (gingiva -> occlusal). Point the camera's
+// "up" along Z so the jaw stands upright and faces the front.
+camera.up.set(0, 0, 1);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(Math.max(viewportEl.clientWidth, 1), Math.max(viewportEl.clientHeight, 1));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+viewportEl.prepend(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.1;
+controls.minDistance = 10;
+controls.maxDistance = 300;
+
+const ambient = new THREE.AmbientLight(0x404060, 0.6);
+scene.add(ambient);
+const hemi = new THREE.HemisphereLight(0x8888ff, 0x444422, 0.8);
+scene.add(hemi);
+const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
+dirLight.position.set(50, 80, 30);
+dirLight.castShadow = true;
+scene.add(dirLight);
+const fillLight = new THREE.DirectionalLight(0x4488ff, 0.5);
+fillLight.position.set(-30, 20, -40);
+scene.add(fillLight);
+const gridHelper = new THREE.GridHelper(100, 20, 0x444466, 0x333355);
+scene.add(gridHelper);
+
+const stageGroup = new THREE.Group();
+scene.add(stageGroup);
+
+const TOOTH_COLORS = [0xe8d5b7, 0xd4c4a8, 0xf0e0c0, 0xddd0b5, 0xe5d0b0, 0xccbbaa, 0xf5e8d0, 0xddccbb];
+const ALIGNER_COLOR = 0x88ccff;
+function toothColor(tn) { return TOOTH_COLORS[Math.abs(tn) % TOOTH_COLORS.length]; }
+
+function resize() {
+  const w = viewportEl.clientWidth;
+  const h = viewportEl.clientHeight;
+  if (w === 0 || h === 0) return;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', resize);
+document.addEventListener('fullscreenchange', () => setTimeout(resize, 120));
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+function loadSTL(url) {
+  return new Promise((resolve, reject) => {
+    const loader = new STLLoader();
+    loader.load(ORTHO_BASE + url, resolve, undefined, reject);
+  });
+}
+
+let jawFilter = 'all';   // all | upper | lower
+let viewMode = 'front';  // front | top | side
+
+// Jaw filter: upper = FDI 11-28, lower = FDI 31-48. Aligner + gingiva always shown.
+function isVisible(name) {
+  if (jawFilter === 'all') return true;
+  const m = name.match(/tooth_(\d+)/);
+  if (!m) return name === 'aligner.stl' || name === 'gingiva.stl';
+  const tn = parseInt(m[1], 10);
+  if (jawFilter === 'upper') return tn >= 11 && tn <= 28;
+  if (jawFilter === 'lower') return tn >= 31 && tn <= 48;
+  return true;
+}
+
+function applyJawFilter() {
+  for (const c of stageGroup.children) {
+    if (c.isMesh) c.visible = isVisible(c.name);
+  }
+}
+
+// Reframe the camera + grid to the currently visible model.
+function frameCamera() {
+  const box = new THREE.Box3().setFromObject(stageGroup);
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  // The model's vertical axis is Z, so the grid must lie in the XY plane
+  // (normal along Z) and sit under the model base.
+  gridHelper.rotation.x = Math.PI / 2;
+  gridHelper.position.z = box.min.z;
+  const dist = Math.max(size.x, size.y, size.z) * 1.7;
+  camera.up.set(0, 0, 1);
+  if (viewMode === 'top') {
+    camera.position.set(center.x, center.y, center.z + dist);
+  } else if (viewMode === 'side') {
+    camera.position.set(center.x + dist, center.y, center.z + dist * 0.15);
+  } else { // front
+    camera.position.set(center.x, center.y - dist, center.z + dist * 0.3);
+  }
+  camera.far = Math.max(dist * 12, 600);
+  camera.updateProjectionMatrix();
+  controls.target.set(center.x, center.y, center.z + size.z * 0.25);
+  controls.update();
+  resize();
+}
+
+window.__setViewerJaw = function (jaw) {
+  jawFilter = jaw || 'all';
+  applyJawFilter();
+  frameCamera();
+};
+
+window.__viewerMeshCount = function () {
+  return stageGroup.children.filter(function (c) { return c.isMesh && c.visible; }).length;
+};
+
+window.__setViewerView = function (mode) {
+  viewMode = mode || 'front';
+  frameCamera();
+};
+
+// Load a stage's STLs into the viewer. planName is passed from the app script.
+window.__viewerLoadStage = async function (stageIndex, planName, quiet) {
+  if (!planName) return;
+  // A new stage replaces all meshes — drop any active editor selection first.
+  clearSelection();
+  try {
+    const resp = await fetch(ORTHO_BASE + '/api/plans/' + encodeURIComponent(planName) + '/stages/' + stageIndex + '/stls');
+    if (!resp.ok) {
+      if (!quiet) {
+        const box = document.getElementById('autoLog');
+        if (box) {
+          const line = document.createElement('div');
+          line.className = 'l';
+          line.textContent = 'Stage ' + stageIndex + ' not rendered yet (HTTP ' + resp.status + ')';
+          box.appendChild(line);
+          box.scrollTop = box.scrollHeight;
+        }
+      }
+      return;
+    }
+    const data = await resp.json();
+    for (const child of stageGroup.children) {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    }
+    while (stageGroup.children.length) stageGroup.remove(stageGroup.children[0]);
+
+    const hint = document.querySelector('.viewport-hint');
+    if (hint) hint.style.display = 'none';
+
+    let loaded = 0;
+    for (const file of data.files) {
+      if (!file.path) continue;
+      try {
+        const geom = await loadSTL(file.path);
+        const isAligner = file.name === 'aligner.stl';
+        const mat = new THREE.MeshPhysicalMaterial({
+          color: isAligner ? ALIGNER_COLOR : toothColor(parseInt(file.name.replace(/\D/g, '')) || 0),
+          metalness: isAligner ? 0.0 : 0.05,
+          roughness: isAligner ? 0.3 : 0.6,
+          transparent: isAligner,
+          opacity: isAligner ? 0.6 : 1.0,
+          side: isAligner ? THREE.DoubleSide : THREE.FrontSide,
+        });
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.name = file.name;
+        stageGroup.add(mesh);
+        loaded++;
+      } catch (e) {
+        console.warn('Failed to load', file.name, e);
+      }
+    }
+    let overlay = document.querySelector('.viewport-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'viewport-overlay';
+      viewportEl.appendChild(overlay);
+    }
+    overlay.textContent = 'Stage ' + stageIndex + ' - ' + loaded + ' objects';
+
+    applyJawFilter();
+    frameCamera();
+  } catch (e) {
+    console.error('Viewer load failed:', e);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Blender-style 3D Editor — select a tooth, drag a gizmo to move/rotate
+//  it, and save the delta back to the plan.
+//
+//  IMPORTANT: the stage STL geometry already has the plan's movement baked
+//  in (Blender applies tx/ty/tz + rx/ry/rz before exporting). So the gizmo
+//  delta is measured RELATIVE to the baked position, and the value saved to
+//  the plan is: planMovement + gizmoDelta (absolute final movement).
+// ═══════════════════════════════════════════════════════════════════════
+let editMode = false;
+let gizmoMode = 'translate';
+let selectedMesh = null;
+let selectedToothNum = null;
+let pivot = null;
+let pivotCenter = new THREE.Vector3();
+let baseMove = { tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0 }; // plan movement at select time
+let onGizmoChange = null;
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+const gizmo = new TransformControls(camera, renderer.domElement);
+gizmo.setSize(0.9);
+gizmo.addEventListener('dragging-changed', (e) => {
+  controls.enabled = !e.value; // disable orbit while dragging the gizmo
+});
+gizmo.addEventListener('objectChange', () => {
+  if (pivot && onGizmoChange) onGizmoChange();
+});
+// In three r169+ TransformControls extends Controls (EventDispatcher), not
+// Object3D — the actual gizmo is its helper, which IS an Object3D.
+scene.add(gizmo.getHelper());
+
+// Highlight the selected tooth (emissive tint)
+function setSelectedHighlight(mesh, on) {
+  if (!mesh || !mesh.material) return;
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const m of mats) {
+    if (on) {
+      m.emissive = m.emissive || new THREE.Color();
+      m.emissive.setHex(0x46c0bd);
+      m.emissiveIntensity = 0.35;
+    } else {
+      m.emissiveIntensity = 0;
+    }
+  }
+}
+
+function clearSelection() {
+  if (selectedMesh) setSelectedHighlight(selectedMesh, false);
+  if (pivot) {
+    // Reparent the mesh back to stageGroup preserving its world transform
+    // (the drag delta stays visible until the next stage load).
+    if (selectedMesh) {
+      selectedMesh.updateWorldMatrix(true, false);
+      const wp = new THREE.Vector3();
+      const wq = new THREE.Quaternion();
+      selectedMesh.getWorldPosition(wp);
+      selectedMesh.getWorldQuaternion(wq);
+      stageGroup.add(selectedMesh);
+      selectedMesh.position.copy(wp);
+      selectedMesh.quaternion.copy(wq);
+    }
+    gizmo.detach();
+    stageGroup.remove(pivot);
+    pivot = null;
+  }
+  selectedMesh = null;
+  selectedToothNum = null;
+}
+
+// Pick the tooth under the pointer (only tooth_*.stl meshes are selectable)
+function pickTooth(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const meshes = stageGroup.children.filter((c) => c.isMesh && /^tooth_\d+\.stl$/.test(c.name));
+  const hits = raycaster.intersectObjects(meshes, false);
+  return hits.length ? hits[0].object : null;
+}
+
+function selectTooth(mesh) {
+  clearSelection();
+  if (!mesh) return;
+  selectedMesh = mesh;
+  selectedToothNum = parseInt(mesh.name.replace(/\D/g, ''), 10) || null;
+  setSelectedHighlight(mesh, true);
+
+  // The plan's movement for this tooth (absolute final target). The gizmo
+  // sits at this offset from the baked position, so dragging shows the new
+  // absolute movement directly.
+  baseMove = (window.__getPlanMovement && window.__getPlanMovement(selectedToothNum)) || baseMove;
+
+  // Build a pivot at the tooth's center so rotation spins around the tooth
+  // itself, not the world origin.
+  const box = new THREE.Box3().setFromObject(mesh);
+  pivotCenter = box.getCenter(new THREE.Vector3());
+  pivot = new THREE.Group();
+  pivot.position.copy(pivotCenter);
+  stageGroup.add(pivot);
+  mesh.position.sub(pivotCenter); // keep world position unchanged
+  pivot.add(mesh);
+
+  // Anchor the gizmo at the plan movement so the current design is shown as-is
+  pivot.position.set(
+    pivotCenter.x + baseMove.tx,
+    pivotCenter.y + baseMove.ty,
+    pivotCenter.z + baseMove.tz
+  );
+  pivot.rotation.set(
+    THREE.MathUtils.degToRad(baseMove.rx),
+    THREE.MathUtils.degToRad(baseMove.ry),
+    THREE.MathUtils.degToRad(baseMove.rz)
+  );
+
+  gizmo.attach(pivot);
+  gizmo.setMode(gizmoMode);
+  if (onGizmoChange) onGizmoChange();
+}
+
+// Exposed to the app script (non-module) for the editor panel.
+window.__setEditMode = function (on) {
+  editMode = !!on;
+  if (!editMode) clearSelection();
+};
+window.__isEditMode = function () { return editMode; };
+window.__setGizmoMode = function (mode) {
+  gizmoMode = mode === 'rotate' ? 'rotate' : 'translate';
+  gizmo.setMode(gizmoMode);
+};
+window.__getGizmoMode = function () { return gizmoMode; };
+window.__pickTooth = function (clientX, clientY) {
+  if (!editMode) return null;
+  const mesh = pickTooth(clientX, clientY);
+  selectTooth(mesh);
+  return mesh ? selectedToothNum : null;
+};
+// Absolute final movement = plan movement + gizmo delta (relative to baked)
+window.__getSelectedTooth = function () {
+  if (!selectedMesh || !pivot) return null;
+  return {
+    toothNumber: selectedToothNum,
+    tx: +(baseMove.tx + (pivot.position.x - pivotCenter.x)).toFixed(2),
+    ty: +(baseMove.ty + (pivot.position.y - pivotCenter.y)).toFixed(2),
+    tz: +(baseMove.tz + (pivot.position.z - pivotCenter.z)).toFixed(2),
+    rx: +(baseMove.rx + THREE.MathUtils.radToDeg(pivot.rotation.x)).toFixed(1),
+    ry: +(baseMove.ry + THREE.MathUtils.radToDeg(pivot.rotation.y)).toFixed(1),
+    rz: +(baseMove.rz + THREE.MathUtils.radToDeg(pivot.rotation.z)).toFixed(1),
+  };
+};
+// Apply absolute movement fields → gizmo delta from the baked position
+window.__applyEditFields = function (f) {
+  if (!pivot) return;
+  const tx = parseFloat(f.tx) || 0, ty = parseFloat(f.ty) || 0, tz = parseFloat(f.tz) || 0;
+  const rx = parseFloat(f.rx) || 0, ry = parseFloat(f.ry) || 0, rz = parseFloat(f.rz) || 0;
+  pivot.position.set(
+    pivotCenter.x + (tx - baseMove.tx),
+    pivotCenter.y + (ty - baseMove.ty),
+    pivotCenter.z + (tz - baseMove.tz)
+  );
+  pivot.rotation.set(
+    THREE.MathUtils.degToRad(rx - baseMove.rx),
+    THREE.MathUtils.degToRad(ry - baseMove.ry),
+    THREE.MathUtils.degToRad(rz - baseMove.rz)
+  );
+};
+window.__onEditorChange = function (cb) { onGizmoChange = cb; };
+window.__clearEditorSelection = function () { clearSelection(); };
+window.__editorHasSelection = function () { return !!selectedMesh; };
+window.__editorResetToBaked = function () {
+  if (!pivot) return;
+  pivot.position.copy(pivotCenter);
+  pivot.rotation.set(0, 0, 0);
+  if (onGizmoChange) onGizmoChange();
+};
+
+// The app script (classic, runs before this module) pre-registers its
+// panel-sync callback here; pick it up now that the module is ready.
+if (window.__editorSyncFn) {
+  onGizmoChange = window.__editorSyncFn;
+}
+</script>
+
+<script>
+  // Base path for same-origin proxying through the WhiteSmile main system
+  // (localhost:3000/ortho). Empty string when accessed directly (:8765).
+  window.ORTHO_BASE = window.location.pathname.startsWith('/ortho') ? '/ortho' : '';
+
+  // Viewer-only mode (?viewer=1): the viewer opens in its own separate
+  // window/container with the setup cards hidden.
+  const viewerOnly = new URLSearchParams(location.search).get('viewer') === '1';
+  // Setup-only mode (?setup=1): hide the viewer so the embedded setup card
+  // shows only the pipeline cards (the viewer lives in its own card).
+  const setupOnly = new URLSearchParams(location.search).get('setup') === '1';
+  if (viewerOnly) {
+    document.addEventListener('DOMContentLoaded', () => {
+      const main = document.querySelector('main.thin-view');
+      if (main) main.style.display = 'none';
+      const vc = document.getElementById('viewerCard');
+      if (vc) {
+        vc.style.display = '';
+        vc.classList.add('fullpage');
+      }
+      const openBtn = document.getElementById('openViewerBtn');
+      if (openBtn) openBtn.style.display = 'none';
+      document.title = 'Design Viewer - Whitesmile Clear';
+    });
+  }
+  let latestCase = null;
+  let rx = '';
+  let running = false;
+
+  // Shared pipeline config from the main system (stages, shell, undercut…)
+  let sharedConfig = null;
+  // Resolves once the shared config has been fetched (or failed) so the
+  // auto-pipeline never runs with a null config and silently falls back to
+  // the 20-stage default instead of the configured 33.
+  let sharedConfigReady = null;
+  let resolveSharedConfigReady = null;
+  sharedConfigReady = new Promise((resolve) => { resolveSharedConfigReady = resolve; });
+
+  // Edit state
+  let planName = '';
+  let plan = null;
+  let editingTooth = null;
+
+  // Change tracking — prevents the 5s poll from rebuilding UI/viewer
+  let lastPlanKey = '';
+  let viewerLoadedKey = '';
+
+  // Domino: auto-ran once per case + prescription
+  let autoRanKey = '';
+
+  function setConn(online, text) {
+    const dot = document.getElementById('connDot');
+    const t = document.getElementById('connText');
+    dot.className = 'dot ' + (online ? 'on' : 'off');
+    t.textContent = text;
+    // Optional header pill (no longer rendered, keep safe for reuse)
+    const pill = document.getElementById('mainAiPill');
+    if (pill) {
+      pill.className = 'status-pill ' + (online ? 'status-online' : 'status-offline');
+      pill.textContent = online ? '● WhiteSmile AI Online' : '● Main system offline';
+    }
+  }
+
+  function log(msg, kind) {
+    const box = document.getElementById('autoLog');
+    const line = document.createElement('div');
+    line.className = 'l' + (kind ? ' ' + kind : '');
+    line.textContent = msg;
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function setFlowState(step, state) {
+    const el = document.getElementById(step);
+    if (!el) return;
+    el.className = 'step' + (state === 'active' ? ' active' : state === 'done' ? ' done' : '');
+  }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    const url = path.startsWith('/') ? ORTHO_BASE + path : path;
+    const resp = await fetch(url, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    });
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => resp.statusText);
+      throw new Error('API ' + resp.status + ': ' + err);
+    }
+    return resp.json();
+  }
+
+  async function loadMainSettings() {
+    try {
+      const data = await api('/api/settings/main');
+      mainServerUrl = data.main_server_url || 'http://localhost:3000';
+      aiAvailable = data.ai_available;
+      setConn(aiAvailable,
+        aiAvailable ? 'Connected to WhiteSmile main system — AI online' : 'Main system unreachable or no API key set');
+      await loadSharedConfig();
+    } catch (e) {
+      setConn(false, 'Could not reach the WhiteSmile main system');
+    }
+  }
+
+  async function loadSharedConfig() {
+    try {
+      const base = mainServerUrl.replace(/\/+$/, '');
+      const data = await fetch(base + '/api/system/config');
+      if (!data.ok) throw new Error('HTTP ' + data.status);
+      sharedConfig = await data.json();
+      document.getElementById('sharedStorage').textContent = sharedConfig.storageFolder || '—';
+      document.getElementById('sharedStages').textContent = String(sharedConfig.stages ?? '—');
+      document.getElementById('sharedExpansion').textContent = String(sharedConfig.expansion ?? '—');
+      document.getElementById('sharedShellThickness').textContent = String(sharedConfig.shellMm ?? '—');
+      document.getElementById('sharedUndercutAngle').textContent = String(sharedConfig.undercutDeg ?? '—');
+    } catch (e) {
+      console.warn('Failed to load shared config:', e);
+    } finally {
+      if (resolveSharedConfigReady) resolveSharedConfigReady();
+    }
+  }
+
+  // ---- Auto-detect: segmented case (Agliner) + treatment plan (Main system) ----
+  async function refreshAuto() {
+    try {
+      const data = await api('/api/storage');
+      const cases = data.cases || [];
+      latestCase = cases.length ? cases[0] : null;
+      const caseEl = document.getElementById('autoCase');
+      if (latestCase) {
+        caseEl.textContent = latestCase.case_name;
+        caseEl.className = 'val ready';
+        document.getElementById('autoTeeth').textContent = String(latestCase.tooth_count) + (latestCase.has_gingiva ? ' + gingiva' : '');
+        setFlowState('flow2', 'done');
+      } else {
+        caseEl.textContent = 'Waiting for segmented case…';
+        caseEl.className = 'val waiting';
+        document.getElementById('autoTeeth').textContent = '—';
+        setFlowState('flow2', '');
+      }
+    } catch (e) {
+      latestCase = null;
+    }
+    try {
+      rx = localStorage.getItem('wsGeneratedRx') || '';
+      const rxEl = document.getElementById('autoRx');
+      if (rx) {
+        rxEl.textContent = rx.length > 90 ? rx.slice(0, 90) + '…' : rx;
+        rxEl.className = 'val ready';
+        rxEl.title = rx;
+        setFlowState('flow1', 'done');
+      } else {
+        rxEl.textContent = 'Waiting for treatment plan…';
+        rxEl.className = 'val waiting';
+        rxEl.title = '';
+        setFlowState('flow1', '');
+      }
+    } catch (e) {
+      rx = '';
+    }
+    updateRunBtn();
+    updateStatusNote();
+    refreshEditCard();
+    maybeAutoRun();
+  }
+
+  // ── Domino: auto-run the pipeline once a segmented case + treatment plan
+  // are both available (B → C). Runs once per case + prescription.
+  async function maybeAutoRun() {    if (viewerOnly) return; // viewer windows never trigger the pipeline    if (running || !latestCase || !rx) return;
+    const autoKey = latestCase.case_name + '::' + (rx ? rx.slice(0, 60) : '');
+    if (autoRanKey === autoKey) return;
+    // Don't collide with another client already rendering on the server
+    try {
+      const st = await api('/api/status');
+      if (st.pipeline_running) return;
+    } catch (e) {
+      return;
+    }
+    autoRanKey = autoKey;
+    log('Inputs ready — auto-running pipeline (' + latestCase.case_name + ')', 'ok');
+    setTimeout(window.runAutoPipeline, 1500);
+  }
+
+  function updateStatusNote() {
+    const note = document.getElementById('autoStatusNote');
+    if (running) return;
+    if (!latestCase && !rx) {
+      note.textContent = 'Waiting for a segmented case and a treatment plan. Upload patient data in the main system, then run Agliner — this panel picks everything up automatically.';
+    } else if (!latestCase) {
+      note.textContent = 'Treatment plan ready. Waiting for segmented STLs from Agliner…';
+    } else if (!rx) {
+      note.textContent = 'Segmented case ready. Waiting for the treatment plan from the main system…';
+    } else {
+      note.textContent = 'Segmented case and treatment plan ready. Click "Run Auto Pipeline" to create the plan, compute staging, and render the aligner design.';
+    }
+  }
+
+  function updateRunBtn() {
+    const btn = document.getElementById('runBtn');
+    btn.disabled = running || !latestCase || !rx;
+    btn.textContent = running ? 'Running…' : 'Run Auto Pipeline';
+  }
+
+  // ---- One-click pipeline: create plan → staging → render ----
+  window.runAutoPipeline = async function () {
+    if (running || !latestCase || !rx) return;
+    running = true;
+    updateRunBtn();
+    const name = latestCase.case_name;
+    try {
+      // Wait for the shared config to arrive so the plan uses the configured
+      // stage count / shell / undercut instead of the hard-coded defaults.
+      if (sharedConfigReady) await sharedConfigReady;
+      setFlowState('flow3', 'active');
+      log('Creating plan: ' + name);
+      await api('/api/plans', {
+        method: 'POST',
+        body: JSON.stringify({
+          case_name: name,
+          stl_dir: latestCase.segmented_dir,
+          num_stages: sharedConfig && sharedConfig.stages ? sharedConfig.stages : 20,
+          shell_thickness: sharedConfig && sharedConfig.shellMm ? sharedConfig.shellMm : 0.75,
+          undercut_angle: sharedConfig && sharedConfig.undercutDeg ? sharedConfig.undercutDeg : 45,
+          attachments_enabled: true,
+          prescription: rx,
+          use_ai: true,
+        }),
+      });
+      log('Plan created. Computing staging…', 'ok');
+
+      await api('/api/plans/' + encodeURIComponent(name) + '/staging', {
+        method: 'POST',
+        body: JSON.stringify({ easing: 'ease-out' }),
+      });
+      log('Staging computed. Starting Blender render…', 'ok');
+
+      const res = await api('/api/plans/' + encodeURIComponent(name) + '/render', { method: 'POST' });
+      log('Render started: ' + res.stages + ' stages. Waiting for Blender…', 'ok');
+
+      const poll = setInterval(async () => {
+        try {
+          const st = await api('/api/status');
+          if (!st.pipeline_running) {
+            clearInterval(poll);
+            log('Pipeline render complete — aligner design generated. You can edit it below.', 'ok');
+            setFlowState('flow3', 'done');
+            running = false;
+            planName = name;
+            updateRunBtn();
+            updateStatusNote();
+            await refreshEditCard();
+          }
+        } catch (e) {
+          // keep polling
+        }
+      }, 2000);
+    } catch (e) {
+      log('Error: ' + e.message, 'err');
+      setFlowState('flow3', '');
+      running = false;
+      updateRunBtn();
+      updateStatusNote();
+    }
+  };
+
+  // ---- Edit design ----
+  async function refreshEditCard() {
+    if (!latestCase) {
+      if (!planName) hideEditCard();
+      return;
+    }
+    const name = latestCase.case_name;
+    try {
+      const data = await api('/api/plans/' + encodeURIComponent(name));
+      const p = data.plan;
+      // Skip the full rebuild when nothing changed (stops the flicker/refresh)
+      const key = name + '|' + (p.tooth_numbers || []).length + '|' + (p.num_stages || 0) + '|' + JSON.stringify(p.movements || {});
+      if (planName === name && lastPlanKey === key) return;
+      lastPlanKey = key;
+      plan = p;
+      planName = name;
+      showEditCard();
+    } catch (e) {
+      if (!planName) hideEditCard();
+    }
+  }
+
+  function showEditCard() {
+    const card = document.getElementById('editCard');
+    card.style.display = '';
+    document.getElementById('editPlanName').textContent =
+      planName + ' · ' + (plan.tooth_numbers ? plan.tooth_numbers.length : 0) + ' teeth · ' + (plan.num_stages || 0) + ' stages';
+    buildToothGrid();
+    showViewer();
+  }
+
+  // ---- Design Viewer - show once a plan exists, load stage 0 (once per plan) ----
+  function showViewer() {
+    if (setupOnly) return; // the viewer lives in its own separate card
+    const vc = document.getElementById('viewerCard');
+    if (!vc) return;
+    vc.style.display = '';
+    const stages = (plan && plan.num_stages) || 0;
+    const timeline = document.getElementById('timeline');
+    timeline.max = Math.max(0, stages - 1);
+    const want = planName + '|0';
+    if (viewerLoadedKey !== want) {
+      timeline.value = 0;
+      document.getElementById('stageLabel').textContent = '0';
+      if (window.__viewerLoadStage) window.__viewerLoadStage(0, planName, false);
+      viewerLoadedKey = want;
+    }
+  }
+
+  function hideViewer() {
+    const vc = document.getElementById('viewerCard');
+    if (vc) vc.style.display = 'none';
+  }
+
+  function hideEditCard() {
+    document.getElementById('editCard').style.display = 'none';
+    hideViewer();
+  }
+
+  function buildToothGrid() {
+    const grid = document.getElementById('editTeethGrid');
+    const teeth = plan && plan.tooth_numbers ? plan.tooth_numbers : [];
+    grid.innerHTML = '';
+    if (!teeth.length) {
+      grid.textContent = 'No teeth in plan.';
+      grid.className = 'val';
+      return;
+    }
+    grid.className = 'tooth-grid';
+    for (const tn of teeth) {
+      const m = plan.movements && plan.movements[tn] ? plan.movements[tn] : {};
+      const hasMove = m.tx || m.ty || m.tz || m.rx || m.ry || m.rz || m.attachment_type;
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'tooth-chip' + (hasMove ? ' active' : '');
+      chip.textContent = String(tn);
+      chip.title = hasMove
+        ? 'TX ' + m.tx + ' TY ' + m.ty + ' TZ ' + m.tz + ' · RX ' + m.rx + ' RY ' + m.ry + ' RZ ' + m.rz + (m.attachment_type ? ' · ' + m.attachment_type : '')
+        : 'No movement';
+      chip.onclick = (function (t) { return function () { openToothModal(t); }; })(tn);
+      grid.appendChild(chip);
+    }
+  }
+
+  window.openToothModal = function (tn) {
+    editingTooth = tn;
+    const m = plan && plan.movements && plan.movements[tn] ? plan.movements[tn] : {};
+    document.getElementById('editToothNumber').textContent = String(tn);
+    document.getElementById('editTx').value = m.tx || 0;
+    document.getElementById('editTy').value = m.ty || 0;
+    document.getElementById('editTz').value = m.tz || 0;
+    document.getElementById('editRx').value = m.rx || 0;
+    document.getElementById('editRy').value = m.ry || 0;
+    document.getElementById('editRz').value = m.rz || 0;
+    document.getElementById('editAttachment').value = m.attachment_type || '';
+    document.getElementById('toothModal').classList.add('open');
+  };
+
+  window.closeToothModal = function () {
+    document.getElementById('toothModal').classList.remove('open');
+    editingTooth = null;
+  };
+
+  window.saveToothEdit = async function () {
+    if (editingTooth == null || !planName) return;
+    const m = {
+      tx: parseFloat(document.getElementById('editTx').value) || 0,
+      ty: parseFloat(document.getElementById('editTy').value) || 0,
+      tz: parseFloat(document.getElementById('editTz').value) || 0,
+      rx: parseFloat(document.getElementById('editRx').value) || 0,
+      ry: parseFloat(document.getElementById('editRy').value) || 0,
+      rz: parseFloat(document.getElementById('editRz').value) || 0,
+      attachment_type: document.getElementById('editAttachment').value || null,
+    };
+    try {
+      await api('/api/plans/' + encodeURIComponent(planName), {
+        method: 'PUT',
+        body: JSON.stringify({ movements: { [editingTooth]: m } }),
+      });
+      if (!plan.movements) plan.movements = {};
+      plan.movements[editingTooth] = m;
+      closeToothModal();
+      buildToothGrid();
+      log('Updated tooth ' + editingTooth + '. Click "Apply &amp; Re-render" to regenerate the design.', 'ok');
+    } catch (e) {
+      log('Error updating tooth: ' + e.message, 'err');
+    }
+  };
+
+  // ---- Apply edits: re-stage + re-render ----
+  window.restageAndRender = async function () {
+    if (!planName || running) return;
+    running = true;
+    updateRunBtn();
+    try {
+      setFlowState('flow3', 'active');
+      log('Applying edits — recomputing staging…', 'ok');
+      await api('/api/plans/' + encodeURIComponent(planName) + '/staging', {
+        method: 'POST',
+        body: JSON.stringify({ easing: 'ease-out' }),
+      });
+      log('Staging recomputed. Re-rendering in Blender…', 'ok');
+      const res = await api('/api/plans/' + encodeURIComponent(planName) + '/render', { method: 'POST' });
+      log('Render started: ' + res.stages + ' stages.', 'ok');
+      const poll = setInterval(async () => {
+        try {
+          const st = await api('/api/status');
+          if (!st.pipeline_running) {
+            clearInterval(poll);
+            log('Re-render complete — updated aligner design generated.', 'ok');
+            setFlowState('flow3', 'done');
+            running = false;
+            updateRunBtn();
+            viewerLoadedKey = '';  // force viewer reload after re-render
+            await refreshEditCard();
+            if (window.__viewerLoadStage) window.__viewerLoadStage(parseInt(document.getElementById('timeline').value) || 0, planName, false);
+          }
+        } catch (e) {
+          // keep polling
+        }
+      }, 2000);
+    } catch (e) {
+      log('Error: ' + e.message, 'err');
+      setFlowState('flow3', '');
+      running = false;
+      updateRunBtn();
+    }
+  };
+
+  // ---- Design Viewer: timeline / play / record / fullscreen ----
+  window.onTimelineChange = function (value) {
+    document.getElementById('stageLabel').textContent = value;
+    if (window.__viewerLoadStage) window.__viewerLoadStage(parseInt(value) || 0, planName, true);
+  };
+
+  let isPlaying = false;
+  let playInterval = null;
+  window.playTimeline = function () {
+    const btn = document.getElementById('playBtn');
+    if (isPlaying) {
+      clearInterval(playInterval);
+      isPlaying = false;
+      btn.textContent = 'Play';
+      return;
+    }
+    isPlaying = true;
+    btn.textContent = 'Pause';
+    const timeline = document.getElementById('timeline');
+    const max = parseInt(timeline.max) || 0;
+    playInterval = setInterval(() => {
+      let v = parseInt(timeline.value) + 1;
+      if (v > max) v = 0;
+      timeline.value = v;
+      onTimelineChange(v);
+    }, 800);
+  };
+
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let isRecording = false;
+  window.toggleRecording = function () {
+    const btn = document.getElementById('recordBtn');
+    if (isRecording) {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      isRecording = false;
+      btn.textContent = 'Record';
+      btn.classList.remove('danger');
+      return;
+    }
+    const canvas = document.querySelector('#viewport canvas');
+    if (!canvas) return;
+    const stream = canvas.captureStream(30);
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'aligner_design_' + (planName || 'case') + '.webm';
+      a.click();
+      URL.revokeObjectURL(url);
+      log('Video saved: ' + a.download, 'ok');
+    };
+    mediaRecorder.start();
+    isRecording = true;
+    btn.textContent = 'Stop';
+    btn.classList.add('danger');
+    log('Recording started...', 'info');
+  };
+
+  window.toggleViewerFullscreen = function () {
+    const vc = document.getElementById('viewerCard');
+    if (!vc) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else if (vc.requestFullscreen) {
+      vc.requestFullscreen().catch(() => {});
+    }
+  };
+
+  // ---- Full-page viewer mode (truly separate from the setup cards) ----
+  window.toggleViewerMode = function () {
+    const vc = document.getElementById('viewerCard');
+    const main = document.querySelector('main.thin-view');
+    if (!vc) return;
+    const isFull = vc.classList.contains('fullpage');
+    if (isFull) {
+      vc.classList.remove('fullpage');
+      if (main) main.style.display = '';
+      document.getElementById('openViewerBtn').textContent = '\u26F6 Open Viewer';
+    } else {
+      vc.classList.add('fullpage');
+      if (main) main.style.display = 'none';
+      document.getElementById('openViewerBtn').textContent = '\u2715 Close Viewer';
+      setTimeout(() => {
+        if (window.__viewerLoadStage) window.__viewerLoadStage(parseInt(document.getElementById('timeline').value) || 0, planName, true);
+      }, 80);
+    }
+  };
+
+  window.setViewerJaw = function (jaw, btn) {
+    document.querySelectorAll('.viewer-tools [data-jaw]').forEach(b => b.classList.toggle('active', b === btn));
+    if (window.__setViewerJaw) window.__setViewerJaw(jaw);
+  };
+
+  window.setViewerView = function (mode, btn) {
+    document.querySelectorAll('.viewer-tools [data-view]').forEach(b => b.classList.toggle('active', b === btn));
+    if (window.__setViewerView) window.__setViewerView(mode);
+  };
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  Blender-style 3D editor panel wiring (talks to the Three.js module)
+  // ═══════════════════════════════════════════════════════════════════
+  let editorSyncing = false;
+
+  function editorPanel() { return document.getElementById('editorPanel'); }
+
+  window.toggleEditMode = function () {
+    if (!planName) {
+      log('No plan yet — run the auto pipeline first, then Edit is available.', 'err');
+      return;
+    }
+    const on = !(window.__isEditMode && window.__isEditMode());
+    if (window.__setEditMode) window.__setEditMode(on);
+    const btn = document.getElementById('editModeBtn');
+    if (btn) {
+      btn.textContent = on ? '\u2715 Exit Edit' : '\u270E Edit';
+      btn.classList.toggle('primary', on);
+    }
+    const panel = editorPanel();
+    if (panel) panel.style.display = on ? 'block' : 'none';
+    if (on) {
+      // Editing works on the FINAL stage (teeth at their target positions)
+      const timeline = document.getElementById('timeline');
+      const max = parseInt(timeline.max) || 0;
+      if (parseInt(timeline.value) !== max) {
+        timeline.value = String(max);
+        onTimelineChange(max);
+      }
+      log('Edit mode: click a tooth in the 3D view to select it, then drag the gizmo.', 'info');
+    } else {
+      if (window.__clearEditorSelection) window.__clearEditorSelection();
+    }
+  };
+
+  window.closeEditorPanel = function () {
+    if (window.__clearEditorSelection) window.__clearEditorSelection();
+    const panel = editorPanel();
+    if (panel) panel.style.display = 'none';
+    const btn = document.getElementById('editModeBtn');
+    if (btn) { btn.textContent = '\u270E Edit'; btn.classList.remove('primary'); }
+    if (window.__setEditMode) window.__setEditMode(false);
+  };
+
+  window.setGizmoMode = function (mode) {
+    if (window.__setGizmoMode) window.__setGizmoMode(mode);
+    document.getElementById('gizmoMoveBtn').classList.toggle('active', mode === 'translate');
+    document.getElementById('gizmoRotateBtn').classList.toggle('active', mode === 'rotate');
+  };
+
+  // Sync the panel fields from the gizmo position (called on gizmo drag)
+  function syncPanelFromGizmo() {
+    if (editorSyncing) return;
+    const sel = window.__getSelectedTooth && window.__getSelectedTooth();
+    if (!sel) return;
+    editorSyncing = true;
+    document.getElementById('epToothNum').textContent = String(sel.toothNumber);
+    document.getElementById('epTx').value = sel.tx;
+    document.getElementById('epTy').value = sel.ty;
+    document.getElementById('epTz').value = sel.tz;
+    document.getElementById('epRx').value = sel.rx;
+    document.getElementById('epRy').value = sel.ry;
+    document.getElementById('epRz').value = sel.rz;
+    editorSyncing = false;
+  }
+
+  // Called when the user types in the panel — apply to the gizmo
+  window.onEditFieldChange = function () {
+    if (editorSyncing) return;
+    if (!window.__editorHasSelection || !window.__editorHasSelection()) return;
+    const f = {
+      tx: document.getElementById('epTx').value,
+      ty: document.getElementById('epTy').value,
+      tz: document.getElementById('epTz').value,
+      rx: document.getElementById('epRx').value,
+      ry: document.getElementById('epRy').value,
+      rz: document.getElementById('epRz').value,
+    };
+    if (window.__applyEditFields) window.__applyEditFields(f);
+  };
+
+  // The Three.js editor module needs the plan's movement for a tooth so it
+  // can anchor the gizmo at the baked final position.
+  window.__getPlanMovement = function (tn) {
+    if (plan && plan.movements && plan.movements[tn]) {
+      const m = plan.movements[tn];
+      return {
+        tx: m.tx || 0, ty: m.ty || 0, tz: m.tz || 0,
+        rx: m.rx || 0, ry: m.ry || 0, rz: m.rz || 0,
+      };
+    }
+    return { tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0 };
+  };
+
+  // Click on the 3D canvas selects a tooth (only in edit mode)
+  function onCanvasClick(e) {
+    if (!(window.__isEditMode && window.__isEditMode())) return;
+    const tn = window.__pickTooth && window.__pickTooth(e.clientX, e.clientY);
+    if (tn != null) {
+      // syncPanelFromGizmo already filled the numeric fields with the plan
+      // movement (the gizmo is anchored there); fill the attachment too.
+      const m = plan && plan.movements && plan.movements[tn] ? plan.movements[tn] : {};
+      editorSyncing = true;
+      document.getElementById('epAttachment').value = m.attachment_type || '';
+      editorSyncing = false;
+      log('Selected tooth ' + tn + '. Drag the gizmo or edit the fields, then Save.', 'ok');
+    }
+  }
+
+  // Register canvas click once the viewer canvas exists
+  function bindCanvasClick() {
+    const canvas = document.querySelector('#viewport canvas');
+    if (canvas && !canvas.dataset.editorBound) {
+      canvas.dataset.editorBound = '1';
+      canvas.addEventListener('click', onCanvasClick);
+    }
+  }
+  setInterval(bindCanvasClick, 1500);
+  bindCanvasClick();
+  // Pre-register the panel-sync callback — the Three.js module (deferred)
+  // picks it up once it finishes loading.
+  window.__editorSyncFn = syncPanelFromGizmo;
+
+  // Save the edited tooth back to the plan (PUT /api/plans)
+  window.saveEditorTooth = async function () {
+    const sel = window.__getSelectedTooth && window.__getSelectedTooth();
+    if (!sel || !planName) return;
+    const m = {
+      tx: parseFloat(document.getElementById('epTx').value) || 0,
+      ty: parseFloat(document.getElementById('epTy').value) || 0,
+      tz: parseFloat(document.getElementById('epTz').value) || 0,
+      rx: parseFloat(document.getElementById('epRx').value) || 0,
+      ry: parseFloat(document.getElementById('epRy').value) || 0,
+      rz: parseFloat(document.getElementById('epRz').value) || 0,
+      attachment_type: document.getElementById('epAttachment').value || null,
+    };
+    try {
+      await api('/api/plans/' + encodeURIComponent(planName), {
+        method: 'PUT',
+        body: JSON.stringify({ movements: { [sel.toothNumber]: m } }),
+      });
+      if (!plan.movements) plan.movements = {};
+      plan.movements[sel.toothNumber] = m;
+      buildToothGrid();
+      log('Saved tooth ' + sel.toothNumber + ' (TX ' + m.tx + ' TY ' + m.ty + ' TZ ' + m.tz + ' · RX ' + m.rx + ' RY ' + m.ry + ' RZ ' + m.rz + '). Click "Apply &amp; Re-render" to regenerate.', 'ok');
+    } catch (e) {
+      log('Error saving tooth: ' + e.message, 'err');
+    }
+  };
+
+  // ---- Open the viewer in its own separate window ----
+  window.openViewerWindow = function () {
+    const url = location.origin + location.pathname + '?viewer=1';
+    window.open(url, '_blank', 'noopener');
+  };
+
+  // ---- Init ----
+  loadMainSettings();
+  refreshAuto();
+  setInterval(refreshAuto, viewerOnly ? 8000 : 10000);
+  if (!viewerOnly) log('Auto pipeline ready. Waiting for inputs…');
+</script>
+</body>
+</html>

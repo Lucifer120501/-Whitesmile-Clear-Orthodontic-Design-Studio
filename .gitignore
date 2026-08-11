@@ -1,0 +1,66 @@
+# ── Secrets — NEVER commit these ──────────────────────────────────────
+api-keys.json
+.env.local
+.env
+!.env.example
+*.secret
+
+# ── Dependencies ──────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+.venv/
+venv/
+env/
+
+# ── Build output ──────────────────────────────────────────────────────
+build/
+dist/
+dist-server/
+coverage/
+*.tsbuildinfo
+
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ── Patient data & runtime files — never upload scans/renders ─────────
+storage/
+uploads/
+!uploads/.gitkeep
+ortho/aligner_pipeline/workspace/
+ortho/aligner_pipeline/case_*/
+ortho/workspace/
+**/segmented_stls/
+**/stages/
+*.stl
+!**/assets/*.stl
+
+# ── Vendored third-party repos (committed to their own repos) ─────────
+ortho/Open3D-main/
+ortho/trimesh-main/
+ortho/synaps-cad/
+ortho/MeshSegNet-master/
+ortho/linkSlicerBlender-master/
+ortho/odc_public-master/
+ai cad/MeshSegNet-master/
+
+# ── OS / editor ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+
+# ── Logs ──────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
