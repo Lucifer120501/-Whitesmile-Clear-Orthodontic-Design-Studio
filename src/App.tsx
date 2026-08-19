@@ -1400,10 +1400,10 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setCurrentTab("workspace")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
                 currentTab === "workspace"
-                  ? "bg-white text-[#46c0bd] shadow-xs"
-                  : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                  ? "bg-white text-[#46c0bd] shadow-xs border-white"
+                  : "bg-white/10 hover:bg-white/20 text-white border-white/25"
               }`}
               id="tab-btn-workspace"
             >
@@ -1412,23 +1412,23 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             </button>
             <button
               onClick={() => setCurrentTab("cheatsheet")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
                 currentTab === "cheatsheet"
-                  ? "bg-white text-[#46c0bd] shadow-xs"
-                  : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                  ? "bg-white text-[#46c0bd] shadow-xs border-white"
+                  : "bg-white/10 hover:bg-white/20 text-white border-white/25"
               }`}
               id="tab-btn-cheatsheet"
             >
               <BookOpen className="w-3.5 h-3.5" />
               Manufacturing Rules Cheatsheet
             </button>
-                        {isAdmin && (
+            {isAdmin && (
               <button
                 onClick={() => setCurrentTab("ai-manager")}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
                   currentTab === "ai-manager"
-                    ? "bg-white text-[#46c0bd] shadow-xs"
-                    : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                    ? "bg-white text-[#46c0bd] shadow-xs border-white"
+                    : "bg-white/10 hover:bg-white/20 text-white border-white/25"
                 }`}
                 id="tab-btn-ai-manager"
               >
@@ -1439,10 +1439,10 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             {isAdmin && (
               <button
                 onClick={() => setCurrentTab("local")}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
                   currentTab === "local"
-                    ? "bg-white text-[#46c0bd] shadow-xs"
-                    : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                    ? "bg-white text-[#46c0bd] shadow-xs border-white"
+                    : "bg-white/10 hover:bg-white/20 text-white border-white/25"
                 }`}
                 id="tab-btn-local"
               >
@@ -1453,10 +1453,10 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             {isAdmin && (
               <button
                 onClick={() => setCurrentTab("storage")}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
                   currentTab === "storage"
-                    ? "bg-white text-[#46c0bd] shadow-xs"
-                    : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                    ? "bg-white text-[#46c0bd] shadow-xs border-white"
+                    : "bg-white/10 hover:bg-white/20 text-white border-white/25"
                 }`}
                 id="tab-btn-storage"
               >
@@ -1468,10 +1468,10 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             {isAdmin && (
               <button
                 onClick={() => setCurrentTab("admin")}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
                   currentTab === "admin"
-                    ? "bg-white text-[#46c0bd] shadow-xs"
-                    : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                    ? "bg-white text-[#46c0bd] shadow-xs border-white"
+                    : "bg-white/10 hover:bg-white/20 text-white border-white/25"
                 }`}
                 id="tab-btn-admin"
               >
@@ -1509,8 +1509,8 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 flex flex-col lg:flex-row gap-8 overflow-hidden print:block print:p-0 print:m-0 print:max-w-none">
         
-        {/* Left Hand: History Sidebar */}
-        {currentTab !== "local" && currentTab !== "storage" && currentTab !== "ai-manager" && currentTab !== "admin" && (
+        {/* Left Hand: History Sidebar (Workspace only) */}
+        {currentTab === "workspace" && (
           <section className="w-full lg:w-80 shrink-0 print:hidden flex flex-col gap-2" id="sidebar-section">
             {isAdmin && (
               <div className="shrink-0">
@@ -1967,7 +1967,7 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
                 }}
               />
               {/* Storage hierarchy info */}
-              <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-4">
+              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
                 <div className="flex items-center gap-2 mb-2">
                   <Archive className="w-4 h-4 text-indigo-600" />
                   <span className="text-xs font-bold text-slate-700">Folder Hierarchy</span>

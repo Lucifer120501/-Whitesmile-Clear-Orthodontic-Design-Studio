@@ -832,7 +832,23 @@ function writeJsonFile(file: string, data: unknown): void {
 }
 
 function readUsers(): UserRecord[] {
-  return readJsonFile<UserRecord[]>(USERS_FILE, []);
+  const users = readJsonFile<UserRecord[]>(USERS_FILE, []);
+  if (users.length === 0) {
+    const salt = createSalt();
+    const defaultAdmin: UserRecord = {
+      id: "u_admin_default",
+      username: "admin",
+      passwordHash: hashPassword("admin123", salt),
+      salt,
+      role: "admin",
+      companyId: null,
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+    users.push(defaultAdmin);
+    writeJsonFile(USERS_FILE, users);
+  }
+  return users;
 }
 function writeUsers(users: UserRecord[]): void {
   writeJsonFile(USERS_FILE, users);

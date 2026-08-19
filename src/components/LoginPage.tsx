@@ -65,19 +65,13 @@ export default function LoginPage({ needsSetup, onLogin, onSetupAdmin }: LoginPa
         <div className="bg-white rounded-2xl border border-slate-200 shadow-lg overflow-hidden">
           {/* Header */}
           <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-[#46c0bd]/10 to-white flex items-center gap-2">
-            {needsSetup ? (
-              <ShieldCheck className="w-5 h-5 text-[#46c0bd]" />
-            ) : (
-              <Lock className="w-5 h-5 text-[#46c0bd]" />
-            )}
+            <Lock className="w-5 h-5 text-[#46c0bd]" />
             <div>
               <h2 className="text-sm font-bold text-slate-800">
-                {needsSetup ? "Create Administrator Account" : "Sign In"}
+                Sign In
               </h2>
               <p className="text-[10px] text-slate-500 mt-0.5">
-                {needsSetup
-                  ? "First run — set up the admin account for this server."
-                  : "Enter your credentials to access the design studio."}
+                Enter your credentials to access the design studio.
               </p>
             </div>
           </div>
@@ -143,24 +137,6 @@ export default function LoginPage({ needsSetup, onLogin, onSetupAdmin }: LoginPa
               </div>
             </div>
 
-            {/* Confirm password (setup only) */}
-            {needsSetup && (
-              <div>
-                <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Confirm Password</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-700 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#46c0bd]/50"
-                  />
-                </div>
-              </div>
-            )}
-
             {/* Error */}
             {error && (
               <div className="flex items-start gap-2 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
@@ -172,15 +148,13 @@ export default function LoginPage({ needsSetup, onLogin, onSetupAdmin }: LoginPa
             <button
               type="submit"
               disabled={busy}
-              className="w-full py-2.5 rounded-lg text-sm font-bold text-white bg-[#46c0bd] hover:bg-[#3ba6a3] transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+              className="w-full py-2.5 rounded-lg text-sm font-bold text-[#46c0bd] bg-white hover:bg-slate-50 border border-[#46c0bd] transition-colors disabled:bg-slate-300 disabled:border-slate-300 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2 shadow-xs"
             >
               {busy ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {needsSetup ? "Creating account..." : "Signing in..."}
+                  <Loader2 className="w-4 h-4 animate-spin text-[#46c0bd]" />
+                  Signing in...
                 </>
-              ) : needsSetup ? (
-                "Create Admin Account"
               ) : (
                 "Sign In"
               )}
