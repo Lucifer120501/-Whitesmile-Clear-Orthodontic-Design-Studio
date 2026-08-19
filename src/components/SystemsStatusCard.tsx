@@ -4,7 +4,8 @@ import { useSystemsStatus } from "../hooks/useSystemsStatus";
 
 /**
  * WhiteSmile Unified Systems — vertical status card for the left sidebar.
- * Shows Main / Agliner / Ortho stacked top-to-bottom with shared storage + AI status.
+ * Admin-only: shows Main / Agliner / Ortho stacked top-to-bottom with shared
+ * storage + AI status so the admin can monitor the satellite systems.
  */
 export default function SystemsStatusCard() {
   const { status, checking, checkStatus } = useSystemsStatus();

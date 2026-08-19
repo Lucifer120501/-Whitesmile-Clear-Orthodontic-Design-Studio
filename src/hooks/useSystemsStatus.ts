@@ -9,10 +9,12 @@ export interface SystemsStatus {
   aiAvailable: boolean;
 }
 
+const defaultOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+
 export const DEFAULT_STATUS: SystemsStatus = {
-  main: { up: true, url: "http://localhost:3000" },
-  agliner: { up: false, url: "http://localhost:3000/agliner/" },
-  ortho: { up: false, url: "http://localhost:3000/ortho/" },
+  main: { up: true, url: defaultOrigin },
+  agliner: { up: false, url: `${defaultOrigin}/agliner/` },
+  ortho: { up: false, url: `${defaultOrigin}/ortho/` },
   storageFolder: "",
   storageExists: false,
   aiAvailable: false,
@@ -20,7 +22,8 @@ export const DEFAULT_STATUS: SystemsStatus = {
 
 /**
  * Shared systems status — polls the main server's /api/systems/status
- * endpoint so both the sidebar status card and the embedded panels stay in sync.
+ * endpoint (admin-only) so the sidebar status card and the embedded panels
+ * stay in sync.
  */
 export function useSystemsStatus() {
   const [status, setStatus] = useState<SystemsStatus>(DEFAULT_STATUS);

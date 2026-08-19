@@ -3,6 +3,9 @@ import path from "path";
 import fs from "fs";
 import net from "net";
 import http from "http";
+import https from "https";
+import os from "os";
+import crypto from "crypto";
 import type { Duplex } from "stream";
 import multer from "multer";
 import dotenv from "dotenv";
@@ -186,10 +189,10 @@ function startSatellites() {
         const proc = isWin
           ? spawn(
               process.env.ComSpec || "cmd.exe",
-              ["/d", "/s", "/c", "npx vite --port 5173 --strictPort --host localhost"],
+              ["/d", "/s", "/c", "npx vite --port 5173 --strictPort --host 0.0.0.0"],
               { cwd: aglinerDir, shell: false, env: { ...process.env, PYTHONIOENCODING: "utf-8", AGLINER_WEB: "1" } }
             )
-          : spawn("npx", ["vite", "--port", "5173", "--strictPort", "--host", "localhost"], {
+          : spawn("npx", ["vite", "--port", "5173", "--strictPort", "--host", "0.0.0.0"], {
               cwd: aglinerDir,
               shell: false,
               env: { ...process.env, PYTHONIOENCODING: "utf-8", AGLINER_WEB: "1" },
@@ -388,7 +391,7 @@ async function findAvailablePort(startPort: number): Promise<number> {
   });
 }
 
-let PORT: number = 3000;
+let PORT: number = Number(process.env.PORT) || 3000;
 
 interface STLMetadata {
   valid: boolean;
@@ -747,6 +750,743 @@ function writeHistory(history: any[]) {
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+//  Multi-Tenant Auth & Company System
+//
+//  - Users belong to companies; companies enable feature packs (checkbox).
+//  - Admins create user accounts; users log in with username + password.
+//  - Data isolation: users see only their own cases (+ company cases when
+//    the company has "sync" enabled). Admins see everything.
+//  - The server runs 24/7 on the admin's PC; users connect via the LAN URL
+//    shown in the admin panel (Connection tab).
+// ═════════════════════════════════════════════════════════════════════════
+
+const serverDataDir = path.join(process.cwd(), "server-data");
+if (!fs.existsSync(serverDataDir)) {
+  fs.mkdirSync(serverDataDir, { recursive: true });
+}
+
+const USERS_FILE = path.join(serverDataDir, "users.json");
+const COMPANIES_FILE = path.join(serverDataDir, "companies.json");
+const SESSIONS_FILE = path.join(serverDataDir, "sessions.json");
+const UPDATES_FILE = path.join(serverDataDir, "updates.json");
+
+interface UserRecord {
+  id: string;
+  username: string;
+  passwordHash: string;
+  salt: string;
+  role: "admin" | "user";
+  companyId: string | null;
+  active: boolean;
+  createdAt: string;
+}
+
+interface CompanyRecord {
+  id: string;
+  name: string;
+  enabledPacks: string[];
+  syncEnabled: boolean;
+  createdAt: string;
+}
+
+interface SessionRecord {
+  token: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+interface UpdateRecord {
+  version: string;
+  commit: string;
+  timestamp: string;
+  status: "applied" | "rolled-back";
+  note?: string;
+}
+
+/** Feature packs — each is a self-contained capability the admin can toggle per company. */
+const FEATURE_PACKS: Array<{ id: string; name: string; description: string }> = [
+  { id: "analysis", name: "Analysis Pack", description: "Case submission, AI analysis & manufacturing spec drafting" },
+  { id: "blender", name: "Blender Pack", description: "Blender CAD integration for aligner design & rendering" },
+  { id: "ortho", name: "Ortho Staging Pack", description: "Ortho staging & render pipeline" },
+  { id: "agliner", name: "Agliner Segmentation Pack", description: "AI tooth segmentation pipeline" },
+];
+
+function readJsonFile<T>(file: string, fallback: T): T {
+  try {
+    if (!fs.existsSync(file)) return fallback;
+    return JSON.parse(fs.readFileSync(file, "utf-8")) as T;
+  } catch (error) {
+    console.error(`Failed to read ${file}:`, error);
+    return fallback;
+  }
+}
+
+function writeJsonFile(file: string, data: unknown): void {
+  try {
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+  } catch (error) {
+    console.error(`Failed to write ${file}:`, error);
+  }
+}
+
+function readUsers(): UserRecord[] {
+  return readJsonFile<UserRecord[]>(USERS_FILE, []);
+}
+function writeUsers(users: UserRecord[]): void {
+  writeJsonFile(USERS_FILE, users);
+}
+function readCompanies(): CompanyRecord[] {
+  return readJsonFile<CompanyRecord[]>(COMPANIES_FILE, []);
+}
+function writeCompanies(companies: CompanyRecord[]): void {
+  writeJsonFile(COMPANIES_FILE, companies);
+}
+function readSessions(): SessionRecord[] {
+  return readJsonFile<SessionRecord[]>(SESSIONS_FILE, []);
+}
+function writeSessions(sessions: SessionRecord[]): void {
+  writeJsonFile(SESSIONS_FILE, sessions);
+}
+function readUpdates(): UpdateRecord[] {
+  return readJsonFile<UpdateRecord[]>(UPDATES_FILE, []);
+}
+function writeUpdates(updates: UpdateRecord[]): void {
+  writeJsonFile(UPDATES_FILE, updates);
+}
+
+// ── Password hashing (Node built-in scrypt — no external deps) ──────────
+function createSalt(): string {
+  return crypto.randomBytes(16).toString("hex");
+}
+function hashPassword(password: string, salt: string): string {
+  return crypto.scryptSync(password, salt, 64).toString("hex");
+}
+function verifyPassword(password: string, salt: string, hash: string): boolean {
+  try {
+    const candidate = crypto.scryptSync(password, salt, 64).toString("hex");
+    const a = Buffer.from(candidate, "hex");
+    const b = Buffer.from(hash, "hex");
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+// ── Sessions ────────────────────────────────────────────────────────────
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function createSession(userId: string): SessionRecord {
+  const token = crypto.randomBytes(32).toString("hex");
+  const now = Date.now();
+  const session: SessionRecord = {
+    token,
+    userId,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + SESSION_TTL_MS).toISOString(),
+  };
+  const sessions = readSessions().filter((s) => new Date(s.expiresAt).getTime() > now);
+  sessions.push(session);
+  writeSessions(sessions);
+  return session;
+}
+
+function getSessionUser(token: string): UserRecord | null {
+  if (!token) return null;
+  const sessions = readSessions();
+  const session = sessions.find((s) => s.token === token);
+  if (!session) return null;
+  if (new Date(session.expiresAt).getTime() < Date.now()) {
+    writeSessions(sessions.filter((s) => s.token !== token));
+    return null;
+  }
+  const user = readUsers().find((u) => u.id === session.userId);
+  if (!user || !user.active) return null;
+  return user;
+}
+
+function destroySession(token: string): void {
+  writeSessions(readSessions().filter((s) => s.token !== token));
+}
+
+// ── Auth middleware ─────────────────────────────────────────────────────
+interface AuthedRequest extends express.Request {
+  user?: UserRecord;
+  company?: CompanyRecord | null;
+}
+
+function requireAuth(req: AuthedRequest, res: express.Response, next: express.NextFunction): void {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const user = token ? getSessionUser(token) : null;
+  if (!user) {
+    res.status(401).json({ error: "Not authenticated. Please log in." });
+    return;
+  }
+  req.user = user;
+  req.company = user.companyId ? readCompanies().find((c) => c.id === user.companyId) || null : null;
+  next();
+}
+
+function requireAdmin(req: AuthedRequest, res: express.Response, next: express.NextFunction): void {
+  requireAuth(req, res, () => {
+    if (req.user?.role !== "admin") {
+      res.status(403).json({ error: "Admin access required." });
+      return;
+    }
+    next();
+  });
+}
+
+/** Gate an endpoint behind a feature pack enabled for the user's company. */
+function requirePack(packId: string) {
+  return (req: AuthedRequest, res: express.Response, next: express.NextFunction): void => {
+    requireAuth(req, res, () => {
+      const packs = req.company?.enabledPacks || [];
+      if (!packs.includes(packId)) {
+        res.status(403).json({ error: `The "${packId}" feature pack is not enabled for your company. Contact your administrator.` });
+        return;
+      }
+      next();
+    });
+  };
+}
+
+// ── Connection info (LAN URL the admin shares with users) ───────────────
+function getLanAddresses(): { ipv4: string[]; urls: string[] } {
+  const ifaces = os.networkInterfaces();
+  const ipv4: string[] = [];
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name] || []) {
+      if (iface.family === "IPv4" && !iface.internal) ipv4.push(iface.address);
+    }
+  }
+  const secureHost = (process.env.PUBLIC_HTTPS_HOST || "").trim();
+  const urls = secureHost
+    ? [`https://${secureHost}:${PORT}`]
+    : ipv4.map((ip) => `http://${ip}:${PORT}`);
+  if (urls.length === 0) urls.push(`${secureHost ? "https" : "http"}://localhost:${PORT}`);
+  return { ipv4, urls };
+}
+
+// ── Public user shape (never expose password hashes) ────────────────────
+function publicUser(u: UserRecord): Record<string, unknown> {
+  return {
+    id: u.id,
+    username: u.username,
+    role: u.role,
+    companyId: u.companyId,
+    active: u.active,
+    createdAt: u.createdAt,
+  };
+}
+
+// ── Auth endpoints ──────────────────────────────────────────────────────
+// Lightweight public status probe — tells the login page whether first-run
+// setup is needed (no users exist yet). No auth required.
+app.get("/api/auth/status", (_req, res) => {
+  res.json({ usersExist: readUsers().length > 0 });
+});
+
+// First-run setup: create the initial admin account (only when no users exist).
+app.post("/api/auth/setup", express.json(), (req, res) => {
+  const users = readUsers();
+  if (users.length > 0) {
+    res.status(403).json({ error: "Setup already completed. Please log in." });
+    return;
+  }
+  const { username, password } = req.body || {};
+  if (!username || typeof username !== "string" || !password || typeof password !== "string") {
+    res.status(400).json({ error: "Username and password are required." });
+    return;
+  }
+  const cleanName = username.trim();
+  if (cleanName.length < 3) {
+    res.status(400).json({ error: "Username must be at least 3 characters." });
+    return;
+  }
+  if (password.length < 6) {
+    res.status(400).json({ error: "Password must be at least 6 characters." });
+    return;
+  }
+  const salt = createSalt();
+  const admin: UserRecord = {
+    id: `u_${crypto.randomBytes(6).toString("hex")}`,
+    username: cleanName,
+    passwordHash: hashPassword(password, salt),
+    salt,
+    role: "admin",
+    companyId: null,
+    active: true,
+    createdAt: new Date().toISOString(),
+  };
+  users.push(admin);
+  writeUsers(users);
+  const session = createSession(admin.id);
+  res.json({ success: true, token: session.token, user: publicUser(admin) });
+});
+
+// Login
+app.post("/api/auth/login", express.json(), (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) {
+    res.status(400).json({ error: "Username and password are required." });
+    return;
+  }
+  const user = readUsers().find((u) => u.username.toLowerCase() === String(username).trim().toLowerCase());
+  if (!user || !verifyPassword(String(password), user.salt, user.passwordHash)) {
+    res.status(401).json({ error: "Invalid username or password." });
+    return;
+  }
+  if (!user.active) {
+    res.status(403).json({ error: "This account has been deactivated. Contact your administrator." });
+    return;
+  }
+  const session = createSession(user.id);
+  res.json({ success: true, token: session.token, user: publicUser(user) });
+});
+
+// Logout
+app.post("/api/auth/logout", (req, res) => {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (token) destroySession(token);
+  res.json({ success: true });
+});
+
+// Current user + company + enabled packs + connection info
+app.get("/api/auth/me", requireAuth, (req: AuthedRequest, res) => {
+  const user = req.user!;
+  const company = req.company || null;
+  const connection = getLanAddresses();
+  res.json({
+    user: publicUser(user),
+    company: company
+      ? { id: company.id, name: company.name, enabledPacks: company.enabledPacks, syncEnabled: company.syncEnabled }
+      : null,
+    enabledPacks: company ? company.enabledPacks : FEATURE_PACKS.map((p) => p.id),
+    connection,
+    packs: FEATURE_PACKS,
+  });
+});
+
+// ── Admin: companies ────────────────────────────────────────────────────
+app.get("/api/admin/companies", requireAdmin, (_req, res) => {
+  const companies = readCompanies().map((c) => ({
+    ...c,
+    userCount: readUsers().filter((u) => u.companyId === c.id).length,
+  }));
+  res.json({ companies });
+});
+
+app.post("/api/admin/companies", requireAdmin, express.json(), (req, res) => {
+  const { name, enabledPacks, syncEnabled } = req.body || {};
+  if (!name || typeof name !== "string" || !name.trim()) {
+    res.status(400).json({ error: "Company name is required." });
+    return;
+  }
+  const companies = readCompanies();
+  if (companies.some((c) => c.name.toLowerCase() === name.trim().toLowerCase())) {
+    res.status(400).json({ error: "A company with that name already exists." });
+    return;
+  }
+  const company: CompanyRecord = {
+    id: `c_${crypto.randomBytes(6).toString("hex")}`,
+    name: name.trim(),
+    enabledPacks: Array.isArray(enabledPacks) ? enabledPacks.filter((p) => FEATURE_PACKS.some((fp) => fp.id === p)) : [],
+    syncEnabled: !!syncEnabled,
+    createdAt: new Date().toISOString(),
+  };
+  companies.push(company);
+  writeCompanies(companies);
+  // Auto-create company folder on local drive
+  createCompanyUserFolders(company.name);
+  res.json({ success: true, company });
+});
+
+app.put("/api/admin/companies/:id", requireAdmin, express.json(), (req, res) => {
+  const companies = readCompanies();
+  const index = companies.findIndex((c) => c.id === req.params.id);
+  if (index === -1) {
+    res.status(404).json({ error: "Company not found." });
+    return;
+  }
+  const { name, enabledPacks, syncEnabled } = req.body || {};
+  const oldName = companies[index].name;
+  if (name && typeof name === "string" && name.trim()) companies[index].name = name.trim();
+  if (Array.isArray(enabledPacks)) {
+    companies[index].enabledPacks = enabledPacks.filter((p) => FEATURE_PACKS.some((fp) => fp.id === p));
+  }
+  if (typeof syncEnabled === "boolean") companies[index].syncEnabled = syncEnabled;
+  writeCompanies(companies);
+  // Rename company folder on local drive if name changed
+  if (oldName !== companies[index].name) {
+    const storage = loadSystemConfig();
+    const basePath = storage.storageFolder;
+    if (basePath) {
+      const oldFolder = path.join(basePath, sanitizeFolderName(oldName));
+      const newFolder = path.join(basePath, sanitizeFolderName(companies[index].name));
+      if (fs.existsSync(oldFolder) && !fs.existsSync(newFolder)) {
+        fs.renameSync(oldFolder, newFolder);
+      }
+    }
+  }
+  res.json({ success: true, company: companies[index] });
+});
+
+app.delete("/api/admin/companies/:id", requireAdmin, (req, res) => {
+  const companies = readCompanies();
+  const company = companies.find((c) => c.id === req.params.id);
+  if (!company) {
+    res.status(404).json({ error: "Company not found." });
+    return;
+  }
+  const usersInCompany = readUsers().filter((u) => u.companyId === company.id);
+  if (usersInCompany.length > 0) {
+    res.status(400).json({ error: `Cannot delete company — ${usersInCompany.length} user(s) still belong to it. Move or delete them first.` });
+    return;
+  }
+  writeCompanies(companies.filter((c) => c.id !== company.id));
+  res.json({ success: true });
+});
+
+// ── Admin: users ────────────────────────────────────────────────────────
+app.get("/api/admin/users", requireAdmin, (_req, res) => {
+  const users = readUsers().map((u) => {
+    const company = u.companyId ? readCompanies().find((c) => c.id === u.companyId) : null;
+    return { ...publicUser(u), companyName: company ? company.name : null };
+  });
+  res.json({ users });
+});
+
+app.post("/api/admin/users", requireAdmin, express.json(), (req, res) => {
+  const { username, password, role, companyId, active } = req.body || {};
+  if (!username || typeof username !== "string" || !password || typeof password !== "string") {
+    res.status(400).json({ error: "Username and password are required." });
+    return;
+  }
+  const cleanName = username.trim();
+  if (cleanName.length < 3) {
+    res.status(400).json({ error: "Username must be at least 3 characters." });
+    return;
+  }
+  if (password.length < 6) {
+    res.status(400).json({ error: "Password must be at least 6 characters." });
+    return;
+  }
+  const users = readUsers();
+  if (users.some((u) => u.username.toLowerCase() === cleanName.toLowerCase())) {
+    res.status(400).json({ error: "That username is already taken." });
+    return;
+  }
+  const userRole = role === "admin" ? "admin" : "user";
+  if (userRole === "user" && companyId) {
+    const company = readCompanies().find((c) => c.id === companyId);
+    if (!company) {
+      res.status(400).json({ error: "Selected company does not exist." });
+      return;
+    }
+  }
+  const salt = createSalt();
+  const user: UserRecord = {
+    id: `u_${crypto.randomBytes(6).toString("hex")}`,
+    username: cleanName,
+    passwordHash: hashPassword(password, salt),
+    salt,
+    role: userRole,
+    companyId: userRole === "user" ? companyId || null : null,
+    active: active !== false,
+    createdAt: new Date().toISOString(),
+  };
+  users.push(user);
+  writeUsers(users);
+  // Auto-create user folder under company folder on local drive
+  if (userRole === "user" && companyId) {
+    const company = readCompanies().find((c) => c.id === companyId);
+    if (company) {
+      createCompanyUserFolders(company.name, user.username);
+    }
+  }
+  res.json({ success: true, user: publicUser(user) });
+});
+
+app.put("/api/admin/users/:id", requireAdmin, express.json(), (req, res) => {
+  const users = readUsers();
+  const index = users.findIndex((u) => u.id === req.params.id);
+  if (index === -1) {
+    res.status(404).json({ error: "User not found." });
+    return;
+  }
+  const { username, password, role, companyId, active } = req.body || {};
+  if (username && typeof username === "string" && username.trim()) {
+    const cleanName = username.trim();
+    if (users.some((u) => u.id !== users[index].id && u.username.toLowerCase() === cleanName.toLowerCase())) {
+      res.status(400).json({ error: "That username is already taken." });
+      return;
+    }
+    users[index].username = cleanName;
+  }
+  if (password && typeof password === "string" && password.length >= 6) {
+    users[index].salt = createSalt();
+    users[index].passwordHash = hashPassword(password, users[index].salt);
+  }
+  if (role === "admin" || role === "user") users[index].role = role;
+  const oldUsername = users[index].username;
+  const oldCompanyId = users[index].companyId;
+  if (username && typeof username === "string" && username.trim()) {
+    const cleanName = username.trim();
+    if (users.some((u) => u.id !== users[index].id && u.username.toLowerCase() === cleanName.toLowerCase())) {
+      res.status(400).json({ error: "That username is already taken." });
+      return;
+    }
+    users[index].username = cleanName;
+  }
+  if (password && typeof password === "string" && password.length >= 6) {
+    users[index].salt = createSalt();
+    users[index].passwordHash = hashPassword(password, users[index].salt);
+  }
+  if (role === "admin" || role === "user") users[index].role = role;
+  if (typeof companyId === "string" || companyId === null) {
+    if (companyId) {
+      const company = readCompanies().find((c) => c.id === companyId);
+      if (!company) {
+        res.status(400).json({ error: "Selected company does not exist." });
+        return;
+      }
+    }
+    users[index].companyId = users[index].role === "admin" ? null : companyId;
+  }
+  if (typeof active === "boolean") users[index].active = active;
+  writeUsers(users);
+  // Handle folder changes for user (rename or move company)
+  if (users[index].role === "user" && users[index].companyId) {
+    const newCompany = readCompanies().find((c) => c.id === users[index].companyId);
+    if (newCompany) {
+      const storage = loadSystemConfig();
+      const basePath = storage.storageFolder;
+      if (basePath) {
+        // If username changed, rename user folder
+        if (oldUsername !== users[index].username) {
+          const oldUserFolder = path.join(basePath, sanitizeFolderName(newCompany.name), sanitizeFolderName(oldUsername));
+          const newUserFolder = path.join(basePath, sanitizeFolderName(newCompany.name), sanitizeFolderName(users[index].username));
+          if (fs.existsSync(oldUserFolder) && !fs.existsSync(newUserFolder)) {
+            fs.renameSync(oldUserFolder, newUserFolder);
+          }
+        }
+        // If company changed, move user folder to new company
+        if (oldCompanyId !== users[index].companyId) {
+          const oldCompany = readCompanies().find((c) => c.id === oldCompanyId);
+          if (oldCompany) {
+            const oldUserFolder = path.join(basePath, sanitizeFolderName(oldCompany.name), sanitizeFolderName(users[index].username));
+            const newUserFolder = path.join(basePath, sanitizeFolderName(newCompany.name), sanitizeFolderName(users[index].username));
+            if (fs.existsSync(oldUserFolder)) {
+              // Ensure new company folder exists
+              if (!fs.existsSync(path.join(basePath, sanitizeFolderName(newCompany.name)))) {
+                fs.mkdirSync(path.join(basePath, sanitizeFolderName(newCompany.name)), { recursive: true });
+              }
+              fs.renameSync(oldUserFolder, newUserFolder);
+            }
+          }
+        }
+        // Ensure user folder exists (for new users or if missing)
+        const userFolder = path.join(basePath, sanitizeFolderName(newCompany.name), sanitizeFolderName(users[index].username));
+        if (!fs.existsSync(userFolder)) {
+          fs.mkdirSync(userFolder, { recursive: true });
+        }
+      }
+    }
+  }
+  res.json({ success: true, user: publicUser(users[index]) });
+});
+
+app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
+  const users = readUsers();
+  const user = users.find((u) => u.id === req.params.id);
+  if (!user) {
+    res.status(404).json({ error: "User not found." });
+    return;
+  }
+  if (user.role === "admin" && users.filter((u) => u.role === "admin").length <= 1) {
+    res.status(400).json({ error: "Cannot delete the last admin account." });
+    return;
+  }
+  writeUsers(users.filter((u) => u.id !== user.id));
+  // Invalidate their sessions
+  writeSessions(readSessions().filter((s) => s.userId !== user.id));
+  res.json({ success: true });
+});
+
+// ── Admin: feature packs ────────────────────────────────────────────────
+app.get("/api/admin/packs", requireAdmin, (_req, res) => {
+  res.json({ packs: FEATURE_PACKS });
+});
+
+// ── Admin: update & rollback (git-based) ────────────────────────────────
+function gitExec(args: string[]): { ok: boolean; stdout: string; stderr: string } {
+  try {
+    const out = execSync(`git ${args.join(" ")}`, {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { ok: true, stdout: out.trim(), stderr: "" };
+  } catch (e: any) {
+    return { ok: false, stdout: "", stderr: String(e.stderr || e.message || e) };
+  }
+}
+
+function getCurrentCommit(): string {
+  const r = gitExec(["rev-parse", "--short", "HEAD"]);
+  return r.ok ? r.stdout : "unknown";
+}
+
+function getCurrentVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf-8"));
+    return pkg.version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+function scheduleRestart(): void {
+  const isProd = process.env.NODE_ENV === "production";
+  const cmd = process.env.WS_RESTART_CMD || (isProd ? "node dist/server.cjs" : "npm run dev");
+  const restart = process.platform === "win32"
+    ? `start "" /b cmd /c "timeout /t 3 /nobreak >nul & ${cmd}"`
+    : `sh -c 'sleep 3 && ${cmd}'`;
+  try {
+    spawn(restart, { detached: true, stdio: "ignore", shell: true }).unref();
+    console.log(`[update] Restart scheduled: ${cmd}`);
+  } catch (e) {
+    console.error("[update] Failed to schedule restart:", e);
+  }
+}
+
+app.get("/api/admin/update/status", requireAdmin, (_req, res) => {
+  const fetchRes = gitExec(["fetch", "origin", "main"]);
+  const behind = fetchRes.ok ? gitExec(["rev-list", "--count", "HEAD..origin/main"]) : { ok: false, stdout: "0" };
+  const log = readUpdates();
+  res.json({
+    currentCommit: getCurrentCommit(),
+    currentVersion: getCurrentVersion(),
+    remoteConfigured: fetchRes.ok,
+    updatesAvailable: fetchRes.ok && Number(behind.stdout) > 0,
+    commitsBehind: fetchRes.ok ? Number(behind.stdout) : 0,
+    workingTreeDirty: gitExec(["status", "--porcelain"]).stdout.length > 0,
+    lastUpdate: log[log.length - 1] || null,
+    updateLog: log,
+  });
+});
+
+app.post("/api/admin/update/apply", requireAdmin, (_req, res) => {
+  const before = getCurrentCommit();
+  // Stash local changes so pull can fast-forward
+  gitExec(["stash", "-u"]);
+  const pull = gitExec(["pull", "--ff-only", "origin", "main"]);
+  if (!pull.ok) {
+    gitExec(["stash", "pop"]);
+    res.status(500).json({ error: `Update failed: ${pull.stderr.slice(0, 400)}` });
+    return;
+  }
+  // Rebuild the production bundle
+  try {
+    execSync("npm run build", { cwd: process.cwd(), stdio: "ignore" });
+  } catch (e) {
+    console.error("[update] Build failed after pull — rolling back:", e);
+    gitExec(["reset", "--hard", before]);
+    gitExec(["stash", "pop"]);
+    res.status(500).json({ error: "Build failed after update. Reverted to the previous version." });
+    return;
+  }
+  gitExec(["stash", "pop"]);
+  const commit = getCurrentCommit();
+  const log = readUpdates();
+  log.push({
+    version: getCurrentVersion(),
+    commit,
+    timestamp: new Date().toISOString(),
+    status: "applied",
+    note: pull.stdout.slice(0, 200),
+  });
+  writeUpdates(log);
+  res.json({ success: true, message: "Update applied. Server is restarting with the new version...", commit });
+  setTimeout(scheduleRestart, 1500);
+});
+
+app.post("/api/admin/update/rollback", requireAdmin, (_req, res) => {
+  const log = readUpdates();
+  const applied = log.filter((u) => u.status === "applied");
+  if (applied.length === 0) {
+    res.status(400).json({ error: "No applied updates to roll back." });
+    return;
+  }
+  const last = applied[applied.length - 1];
+  const before = getCurrentCommit();
+  // Revert the last applied update commit (keeps history intact)
+  const revert = gitExec(["revert", "--no-edit", last.commit]);
+  if (!revert.ok) {
+    res.status(500).json({ error: `Rollback failed: ${revert.stderr.slice(0, 400)}` });
+    return;
+  }
+  try {
+    execSync("npm run build", { cwd: process.cwd(), stdio: "ignore" });
+  } catch (e) {
+    console.error("[update] Build failed after rollback:", e);
+    res.status(500).json({ error: "Build failed after rollback. Manual intervention required." });
+    return;
+  }
+  log.push({
+    version: getCurrentVersion(),
+    commit: getCurrentCommit(),
+    timestamp: new Date().toISOString(),
+    status: "rolled-back",
+    note: `Reverted ${last.commit} (was ${before})`,
+  });
+  writeUpdates(log);
+  res.json({ success: true, message: "Rollback applied. Server is restarting...", commit: getCurrentCommit() });
+  setTimeout(scheduleRestart, 1500);
+});
+
+// ── Data isolation helpers ──────────────────────────────────────────────
+/** Filter history for a user: own cases + company cases when sync is enabled. Admins see all. */
+function filterHistoryForUser(history: any[], user: UserRecord, company: CompanyRecord | null): any[] {
+  if (user.role === "admin") return history;
+  const own = history.filter((c) => c.ownerUserId === user.id);
+  if (company?.syncEnabled) {
+    const companyCases = history.filter((c) => c.companyId === company.id);
+    // Merge without duplicates
+    const seen = new Set(own.map((c) => c.id));
+    for (const c of companyCases) {
+      if (!seen.has(c.id)) own.push(c);
+    }
+  }
+  return own;
+}
+
+function canAccessCase(user: UserRecord, company: CompanyRecord | null, caseRecord: any): boolean {
+  if (user.role === "admin") return true;
+  if (caseRecord.ownerUserId === user.id) return true;
+  if (company?.syncEnabled && caseRecord.companyId === company.id) return true;
+  return false;
+}
+
+/** Tenant storage is server-selected, never a path supplied by a client. */
+function getTenantStoragePath(user: UserRecord): string {
+  const config = loadSystemConfig();
+  const base = path.resolve(config.storageFolder);
+  if (user.role === "admin" || !user.companyId) return base;
+  const company = readCompanies().find((c) => c.id === user.companyId);
+  if (!company) throw new Error("Your company no longer exists.");
+  return path.join(base, sanitizeFolderName(company.name), sanitizeFolderName(user.username));
+}
+
+function isPathInside(candidate: string, parent: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function generatePrintReadySql(caseData: any): string {
   const patientName = `Dental Case ${caseData.id}`;
   const patientId = caseData.id;
@@ -834,11 +1574,24 @@ app.use("/uploads", express.static(uploadsDir, {
   }
 }));
 
-// Serve the shared storage folder (segmented STLs from agliner, rendered
-// stages from ortho) under /storage so all three systems can view the same files.
+// Serve shared storage only after authentication and tenant checks.
 // NOTE: initialized with the default path here; updated by POST /api/system/config.
 let sharedStorageDir = path.join(process.cwd(), "storage");
-app.use("/storage", express.static(sharedStorageDir, {
+app.use("/storage", requireAuth, (req: AuthedRequest, res, next) => {
+  const [companySegment, userSegment] = req.path.split("/").filter(Boolean);
+  const user = req.user!;
+  const company = req.company;
+  if (user.role === "admin") return next();
+  if (!company || companySegment !== sanitizeFolderName(company.name)) {
+    res.status(403).json({ error: "Storage access is limited to your company." });
+    return;
+  }
+  if (userSegment !== sanitizeFolderName(user.username) && !company.syncEnabled) {
+    res.status(403).json({ error: "Company folder sharing is disabled." });
+    return;
+  }
+  next();
+}, express.static(sharedStorageDir, {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.stl')) {
       res.setHeader('Content-Type', 'application/sla');
@@ -849,7 +1602,28 @@ app.use("/storage", express.static(sharedStorageDir, {
 // Initialize Gemini SDK lazily, with telemetry User-Agent
 let aiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI | null {
-  // Check runtime (UI-managed) key first
+  // If an OpenAI-compatible provider from the registry is active, return a
+  // truthy sentinel so availability checks pass — generateContentWithRetry
+  // routes the actual call to the HTTP endpoint.
+  if (isOpenAiCompatibleActive()) {
+    return {} as GoogleGenAI;
+  }
+  // 1) JSON config apiKey (from the AI Manager JSON editor) takes priority
+  const configKey = aiRuntimeConfig.apiKey;
+  if (configKey) {
+    if (!aiClient) {
+      try {
+        aiClient = new GoogleGenAI({
+          apiKey: configKey,
+          httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+        });
+      } catch {
+        return null;
+      }
+    }
+    return aiClient;
+  }
+  // 2) Runtime (UI-managed) key — the active saved API key
   const runtimeApiKey = activeApiKey;
   if (runtimeApiKey) {
     if (!aiClient) {
@@ -864,7 +1638,7 @@ function getGeminiClient(): GoogleGenAI | null {
     }
     return aiClient;
   }
-  // Fall back to env var
+  // 3) Fall back to env var
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.trim() === "") {
     console.warn("GEMINI_API_KEY not set or placeholder. Mock engine will be used.");
@@ -883,49 +1657,231 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
-// Robust wrapper with exponential backoff for transient GenAI errors
+/** Call an OpenAI-compatible chat-completions endpoint (registry providers).
+ *  Handles both plain JSON and SSE streaming responses. */
+async function callOpenAiCompatible(
+  provider: AiProviderEntry,
+  params: { model: string; contents: any[]; config?: any }
+): Promise<{ text: string; raw?: any }> {
+  const modelId = provider.activeModelId || provider.models[0]?.id;
+  const model = provider.models.find(m => m.id === modelId) || provider.models[0];
+  if (!model || !model.url) {
+    throw new Error(`Provider "${provider.name}" has no usable model URL.`);
+  }
+  // Convert Gemini-style contents to chat messages. Parts that carry only
+  // text are mapped to user messages; an explicit "model"/"assistant" role
+  // becomes an assistant turn so multi-turn chats keep working.
+  const messages: { role: string; content: string }[] = [];
+  for (const c of params.contents || []) {
+    const role = c.role === "model" || c.role === "assistant" ? "assistant" : "user";
+    const parts = Array.isArray(c.parts) ? c.parts : [];
+    const text = parts.map((p: any) => (typeof p === "string" ? p : p.text || "")).filter(Boolean).join("\n");
+    if (text) messages.push({ role, content: text });
+  }
+  if (!messages.length) messages.push({ role: "user", content: "..." });
+  const temperature = params.config?.temperature != null ? Number(params.config.temperature) : 0.7;
+  const body: any = {
+    model: model.id,
+    messages,
+    temperature,
+    stream: false,
+  };
+  if (model.maxOutputTokens) body.max_tokens = model.maxOutputTokens;
+
+  // AbortController timeout — the free endpoints can hang; fail fast.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120000);
+  let resp: Response;
+  try {
+    resp = await fetch(model.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err: any) {
+    clearTimeout(timer);
+    throw new Error(`[${provider.name}] Network error: ${err?.message || err}`);
+  }
+  clearTimeout(timer);
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new Error(`[${provider.name}] HTTP ${resp.status}: ${errText.slice(0, 300)}`);
+  }
+  const contentType = resp.headers.get("content-type") || "";
+  const rawText = await resp.text();
+
+  // SSE streaming — accumulate delta.content (and reasoning if no content yet)
+  if (contentType.includes("text/event-stream") || rawText.trimStart().startsWith("data:")) {
+    let text = "";
+    for (const line of rawText.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const chunk = JSON.parse(payload);
+        const delta = chunk?.choices?.[0]?.delta;
+        if (delta) {
+          if (typeof delta.content === "string") text += delta.content;
+          else if (typeof delta.reasoning_content === "string" && !text) text += delta.reasoning_content;
+        }
+        if (typeof chunk?.choices?.[0]?.message?.content === "string") text += chunk.choices[0].message.content;
+      } catch { /* skip malformed SSE line */ }
+    }
+    return { text: text || "", raw: undefined };
+  }
+
+  // Plain JSON response
+  let data: any;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(`[${provider.name}] Invalid response from endpoint.`);
+  }
+  const text = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
+  return { text: typeof text === "string" ? text : JSON.stringify(text), raw: data };
+}
+
+// Robust wrapper with exponential backoff for transient errors. Tries every
+// ACTIVE provider in priority order (primary first, then backups) until one
+// responds. Each provider gets its own retry/backoff loop before the chain
+// moves to the next one. OpenAI-compatible endpoints go through HTTP;
+// otherwise the Gemini SDK is used (simple config / saved key).
 async function generateContentWithRetry(
   ai: GoogleGenAI,
-  params: { model: string; contents: any[]; config?: any },
+  params: { 
+    model: string; 
+    contents: any[]; 
+    config?: any;
+    _userId?: string;
+    _username?: string;
+    _companyId?: string;
+    _companyName?: string;
+    _requestType?: string;
+  },
   retries = 3,
   delayMs = 1500
 ): Promise<any> {
-  let lastError: any = null;
-  for (let attempt = 1; attempt <= retries; attempt++) {
+  // Use the model selected in the AI Manager (JSON config / model picker).
+  params.model = getAiModel();
+
+  // Retry/backoff loop for a single call attempt.
+  const attemptWithBackoff = async (fn: () => Promise<any>): Promise<any> => {
+    let lastError: any = null;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        if (attempt > 1) {
+          console.log(`[AI API Retry] Attempt ${attempt} of ${retries} after transient failure...`);
+        }
+        return await fn();
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err.message || String(err);
+        const status = err.status || (err.error && err.error.code) || 0;
+        console.error(`[AI API Attempt ${attempt} failed] Status: ${status}, Error: ${errMsg}`);
+        const isTransient =
+          status === 503 ||
+          status === 429 ||
+          errMsg.includes("503") ||
+          errMsg.includes("429") ||
+          errMsg.includes("UNAVAILABLE") ||
+          errMsg.includes("fetch") ||
+          errMsg.includes("socket") ||
+          errMsg.includes("timeout") ||
+          errMsg.includes("ECONN") ||
+          errMsg.includes("ETIMEDOUT");
+        if (!isTransient || attempt === retries) {
+          throw err;
+        }
+        const waitTime = delayMs * (2 ** (attempt - 1)) + Math.random() * 500;
+        console.log(`[AI API Backoff] Waiting ${Math.round(waitTime)}ms before next attempt...`);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+      }
+    }
+    throw lastError;
+  };
+
+  // 1) Active OpenAI-compatible providers in priority order (fallback chain)
+  const httpProviders = getActiveAiProviders().filter(
+    p => (p.vendor === "customendpoint" || p.apiType === "chat-completions") && !!p.apiKey && p.models.length > 0
+  );
+  let lastHttpError: any = null;
+  for (const provider of httpProviders) {
     try {
-      if (attempt > 1) {
-        console.log(`[Gemini API Retry] Attempt ${attempt} of ${retries} after transient failure...`);
+      console.log(`[AI API] Trying provider "${provider.name}" (priority ${provider.priority ?? "?"})…`);
+      const result = await attemptWithBackoff(() => callOpenAiCompatible(provider, params));
+      // Record usage for successful OpenAI-compatible call
+      const activeModel = provider.models.find(m => m.id === (provider.activeModelId || provider.models[0]?.id)) || provider.models[0];
+      if (activeModel) {
+        // Estimate tokens from response (rough approximation)
+        const outputText = result.text || "";
+        const outputTokens = Math.ceil(outputText.length / 4);
+        const inputText = JSON.stringify(params.contents || []);
+        const inputTokens = Math.ceil(inputText.length / 4);
+        recordAiUsage({
+          userId: (params as any)._userId || "unknown",
+          username: (params as any)._username || "unknown",
+          companyId: (params as any)._companyId || "unknown",
+          companyName: (params as any)._companyName || "unknown",
+          providerId: provider.id,
+          providerName: provider.name,
+          modelId: activeModel.id,
+          modelName: activeModel.name || activeModel.id,
+          inputTokens,
+          outputTokens,
+          totalTokens: inputTokens + outputTokens,
+          estimatedCostUsd: estimateCost(activeModel.id, inputTokens, outputTokens),
+          requestType: (params as any)._requestType || "chat",
+        });
       }
-      const response = await ai.models.generateContent(params);
-      return response;
+      return result;
     } catch (err: any) {
-      lastError = err;
-      const errMsg = err.message || String(err);
-      const status = err.status || (err.error && err.error.code) || 0;
-      console.error(`[Gemini API Attempt ${attempt} failed] Status: ${status}, Error: ${errMsg}`);
-      
-      // Determine if error is transient: 503 (service unavailable), 429 (rate limit), or network fetch errors
-      const isTransient = 
-        status === 503 || 
-        status === 429 || 
-        errMsg.includes("503") || 
-        errMsg.includes("429") || 
-        errMsg.includes("UNAVAILABLE") ||
-        errMsg.includes("fetch") ||
-        errMsg.includes("socket") ||
-        errMsg.includes("timeout");
-        
-      if (!isTransient || attempt === retries) {
-        throw err;
-      }
-      
-      // Backoff with jitter
-      const waitTime = delayMs * (2 ** (attempt - 1)) + Math.random() * 500;
-      console.log(`[Gemini API Backoff] Waiting ${Math.round(waitTime)}ms before next attempt...`);
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      lastHttpError = err;
+      console.warn(`[AI API] Provider "${provider.name}" exhausted — trying next active provider (if any).`);
     }
   }
-  throw lastError;
+  if (httpProviders.length > 0) {
+    // All HTTP providers failed — surface the last error so the user knows
+    // their configured AIs are unreachable (no silent Gemini fallback).
+    throw lastHttpError || new Error("[AI API] All active providers failed.");
+  }
+
+  // 2) No OpenAI-compatible providers → Gemini SDK path
+  const geminiResult = await attemptWithBackoff(() => ai.models.generateContent(params));
+  // Record usage for successful Gemini call
+  const modelId = params.config?.model || "gemini-3.5-flash";
+  const usageMetadata = (geminiResult as any).usageMetadata;
+  let inputTokens = 0, outputTokens = 0;
+  if (usageMetadata) {
+    inputTokens = usageMetadata.promptTokenCount || 0;
+    outputTokens = usageMetadata.candidatesTokenCount || 0;
+  } else {
+    // Fallback estimation
+    const outputText = geminiResult.text || "";
+    outputTokens = Math.ceil(outputText.length / 4);
+    const inputText = JSON.stringify(params.contents || []);
+    inputTokens = Math.ceil(inputText.length / 4);
+  }
+  recordAiUsage({
+    userId: (params as any)._userId || "unknown",
+    username: (params as any)._username || "unknown",
+    companyId: (params as any)._companyId || "unknown",
+    companyName: (params as any)._companyName || "unknown",
+    providerId: "google-genai",
+    providerName: "Google Gemini",
+    modelId,
+    modelName: modelId,
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    estimatedCostUsd: estimateCost(modelId, inputTokens, outputTokens),
+    requestType: (params as any)._requestType || "chat",
+  });
+  return geminiResult;
 }
 
 const CORE_MEMORY_FILE = path.join(process.cwd(), "core_memory.json");
@@ -1101,8 +2057,9 @@ app.post("/api/local-sync", express.json({ limit: '10mb' }), async (req, res) =>
 });
 
 // Poll endpoint for "Keep in Sync" — lightweight path availability check
-app.post("/api/local-poll", express.json(), async (req, res) => {
+app.post("/api/local-poll", requireAuth, express.json(), async (req, res) => {
   const { localPath } = req.body;
+  const user = (req as any).user;
 
   if (!localPath) {
     res.json({ disconnected: true, error: "No local path configured." });
@@ -1136,13 +2093,15 @@ interface SyncJob {
   };
   errors: string[];
   createdAt: number;
+  _user?: any; // User info for storage folder resolution
 }
 
 const activeSyncJobs = new Map<string, SyncJob>();
 
 // POST /api/sync/scan — Recursive folder scan with full metadata
-app.post("/api/sync/scan", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/sync/scan", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { folderPath } = req.body;
+  const user = (req as any).user;
   if (!folderPath) {
     res.status(400).json({ error: 'Folder path is required.' });
     return;
@@ -1158,6 +2117,10 @@ app.post("/api/sync/scan", express.json({ limit: '10mb' }), async (req, res) => 
       res.status(400).json({ error: 'Path is not a directory.' });
       return;
     }
+
+    // Get user's company to filter visible files
+    const userCompany = user.companyId ? readCompanies().find(c => c.id === user.companyId) : null;
+    const canSeeAllCompanyFiles = userCompany?.syncEnabled === true;
 
     const files: Array<{
       name: string;
@@ -1265,9 +2228,9 @@ app.post("/api/sync/scan", express.json({ limit: '10mb' }), async (req, res) => 
 });
 
 // POST /api/sync/start — Start async file synchronization
-app.post("/api/sync/start", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/sync/start", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { folderPath, selectedFiles, syncMode, storageTarget } = req.body;
-
+  const user = (req as any).user;
   if (!folderPath || !selectedFiles || !Array.isArray(selectedFiles) || selectedFiles.length === 0) {
     res.status(400).json({ error: 'Folder path and selected files are required.' });
     return;
@@ -1285,6 +2248,7 @@ app.post("/api/sync/start", express.json({ limit: '10mb' }), async (req, res) =>
     progress: { percent: 0, currentFile: '', filesCompleted: 0, totalFiles: selectedFiles.length, stage: 'Starting...' },
     errors: [],
     createdAt: Date.now(),
+    _user: user, // Attach user info for storage folder resolution
   };
 
   activeSyncJobs.set(syncId, job);
@@ -1301,6 +2265,21 @@ app.post("/api/sync/start", express.json({ limit: '10mb' }), async (req, res) =>
 
 async function processSyncJob(job: SyncJob) {
   const resolvedPath = path.resolve(job.folderPath);
+  const user = (job as any)._user; // User info attached when job is created
+  const storage = loadSystemConfig();
+  const baseStoragePath = storage.storageFolder;
+  
+  // Determine user's storage folder: <storage>/<Company>/<User>/
+  let userStoragePath = baseStoragePath;
+  if (user && user.companyId) {
+    const company = readCompanies().find(c => c.id === user.companyId);
+    if (company) {
+      userStoragePath = path.join(baseStoragePath, sanitizeFolderName(company.name), sanitizeFolderName(user.username));
+      if (!fs.existsSync(userStoragePath)) {
+        fs.mkdirSync(userStoragePath, { recursive: true });
+      }
+    }
+  }
 
   for (let i = 0; i < job.selectedFiles.length; i++) {
     if (job.status === 'error') break;
@@ -1314,7 +2293,7 @@ async function processSyncJob(job: SyncJob) {
     job.progress.percent = Math.round(((i + 1) / job.selectedFiles.length) * 100);
 
     try {
-      // Read & verify file directly from source — no copying
+      // Read & verify file directly from source
       if (!fs.existsSync(sourcePath)) {
         job.errors.push(`File not found: ${relPath}`);
         continue;
@@ -1332,7 +2311,15 @@ async function processSyncJob(job: SyncJob) {
         fs.closeSync(fd);
       }
 
-      job.progress.stage = `Synced ${path.basename(relPath)} (in-place)`;
+      // Copy file to user's storage folder (server-side storage)
+      if (userStoragePath !== baseStoragePath) {
+        const destPath = path.join(userStoragePath, relPath);
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        fs.copyFileSync(sourcePath, destPath);
+        job.progress.stage = `Synced ${path.basename(relPath)} → storage`;
+      } else {
+        job.progress.stage = `Synced ${path.basename(relPath)} (in-place)`;
+      }
     } catch (err: any) {
       job.errors.push(`Failed to verify ${relPath}: ${err && typeof err.message === 'string' ? err.message : String(err)}`);
     }
@@ -1340,7 +2327,9 @@ async function processSyncJob(job: SyncJob) {
 
   job.progress.filesCompleted = job.selectedFiles.length;
   job.progress.percent = 100;
-  job.progress.stage = 'Complete — files ready in original location';
+  job.progress.stage = userStoragePath !== baseStoragePath 
+    ? 'Complete — files saved to your storage folder' 
+    : 'Complete — files ready in original location';
   job.status = 'completed';
 
   // Clean up old jobs after 5 minutes
@@ -1348,8 +2337,9 @@ async function processSyncJob(job: SyncJob) {
 }
 
 // GET /api/sync/progress/:syncId — Poll sync progress
-app.get('/api/sync/progress/:syncId', (req, res) => {
+app.get('/api/sync/progress/:syncId', requireAuth, (req, res) => {
   const { syncId } = req.params;
+  const user = (req as any).user;
   const job = activeSyncJobs.get(syncId);
 
   if (!job) {
@@ -1378,8 +2368,9 @@ app.get('/api/sync/progress/:syncId', (req, res) => {
 });
 
 // POST /api/sync/unsync — Remove synchronization
-app.post('/api/sync/unsync', express.json(), async (req, res) => {
+app.post('/api/sync/unsync', requireAuth, express.json(), async (req, res) => {
   const { folderPath, allowWrite } = req.body;
+  const user = (req as any).user;
 
   if (!folderPath) {
     res.status(400).json({ error: 'Folder path is required.' });
@@ -1409,8 +2400,9 @@ app.post('/api/sync/unsync', express.json(), async (req, res) => {
 });
 
 // POST /api/sync/read-file — Read a file directly from its local path (no copy)
-app.post('/api/sync/read-file', express.json({ limit: '500mb' }), async (req, res) => {
+app.post('/api/sync/read-file', requireAuth, express.json({ limit: '500mb' }), async (req, res) => {
   const { folderPath, relativePath } = req.body;
+  const user = (req as any).user;
 
   if (!folderPath || !relativePath) {
     res.status(400).json({ error: 'folderPath and relativePath are required.' });
@@ -1418,11 +2410,11 @@ app.post('/api/sync/read-file', express.json({ limit: '500mb' }), async (req, re
   }
 
   try {
-    const resolvedBase = path.resolve(folderPath);
+    const resolvedBase = getTenantStoragePath(user);
     const resolvedFile = path.resolve(resolvedBase, relativePath);
 
     // Security: ensure resolved path is inside the base folder
-    if (!resolvedFile.startsWith(resolvedBase)) {
+    if (!isPathInside(resolvedFile, resolvedBase)) {
       res.status(403).json({ error: 'Access denied: path traversal detected.' });
       return;
     }
@@ -1471,8 +2463,9 @@ app.post('/api/sync/read-file', express.json({ limit: '500mb' }), async (req, re
 });
 
 // POST /api/sync/write-file — Write a file directly to a local path (for storage mode)
-app.post('/api/sync/write-file', express.json({ limit: '500mb' }), async (req, res) => {
+app.post('/api/sync/write-file', requireAuth, express.json({ limit: '500mb' }), async (req, res) => {
   const { folderPath, relativePath, content } = req.body;
+  const user = (req as any).user;
 
   if (!folderPath || !relativePath || !content) {
     res.status(400).json({ error: 'folderPath, relativePath, and content are required.' });
@@ -1480,11 +2473,11 @@ app.post('/api/sync/write-file', express.json({ limit: '500mb' }), async (req, r
   }
 
   try {
-    const resolvedBase = path.resolve(folderPath);
+    const resolvedBase = getTenantStoragePath(user);
     const resolvedFile = path.resolve(resolvedBase, relativePath);
 
     // Security: ensure resolved path is inside the base folder
-    if (!resolvedFile.startsWith(resolvedBase)) {
+    if (!isPathInside(resolvedFile, resolvedBase)) {
       res.status(403).json({ error: 'Access denied: path traversal detected.' });
       return;
     }
@@ -1508,8 +2501,9 @@ app.post('/api/sync/write-file', express.json({ limit: '500mb' }), async (req, r
 });
 
 // POST /api/sync/check-changes — Detect file changes in a synced folder
-app.post('/api/sync/check-changes', express.json(), async (req, res) => {
+app.post('/api/sync/check-changes', requireAuth, express.json(), async (req, res) => {
   const { folderPath } = req.body;
+  const user = (req as any).user;
 
   if (!folderPath) {
     res.status(400).json({ error: 'Folder path is required.' });
@@ -1574,7 +2568,7 @@ app.post('/api/sync/check-changes', express.json(), async (req, res) => {
 });
 
 // POST /api/sync/import-terminal — Run a terminal command with selected file paths
-app.post('/api/sync/import-terminal', async (req, res) => {
+app.post('/api/sync/import-terminal', requireAdmin, async (req, res) => {
   try {
     const { folderPath, selectedFiles, command } = req.body;
 
@@ -1702,8 +2696,179 @@ function saveApiKeysToFile(keys: ApiKeyEntry[]): boolean {
 // Load keys on startup
 loadApiKeys();
 
+// ── AI Usage Metering ──────────────────────────────────────────────
+const AI_USAGE_FILE = path.join(process.cwd(), "server-data", "ai-usage.json");
+
+interface AiUsageEntry {
+  id: string;
+  userId: string;
+  username: string;
+  companyId: string;
+  companyName: string;
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  timestamp: string;
+  requestType: string; // e.g., "chat", "analysis", "optimization", "audit"
+}
+
+let aiUsageCache: AiUsageEntry[] = [];
+
+function loadAiUsage(): AiUsageEntry[] {
+  try {
+    if (fs.existsSync(AI_USAGE_FILE)) {
+      const raw = fs.readFileSync(AI_USAGE_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) aiUsageCache = parsed;
+    }
+  } catch (err) {
+    console.warn("Failed to load AI usage file:", err);
+  }
+  return aiUsageCache;
+}
+
+function saveAiUsage(usage: AiUsageEntry[]): boolean {
+  try {
+    fs.writeFileSync(AI_USAGE_FILE, JSON.stringify(usage, null, 2), "utf-8");
+    aiUsageCache = usage;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function recordAiUsage(entry: Omit<AiUsageEntry, "id" | "timestamp">): void {
+  const usage = loadAiUsage();
+  usage.push({
+    ...entry,
+    id: `usage_${crypto.randomBytes(8).toString("hex")}`,
+    timestamp: new Date().toISOString(),
+  });
+  // Keep only last 10000 entries to prevent unbounded growth
+  if (usage.length > 10000) {
+    usage.splice(0, usage.length - 10000);
+  }
+  saveAiUsage(usage);
+}
+
+// Pricing per 1M tokens (approximate, update as needed)
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  "gemini-3.5-flash": { input: 0.075, output: 0.30 },
+  "gemini-3.5-pro": { input: 1.25, output: 5.00 },
+  "gemini-2.5-flash": { input: 0.075, output: 0.30 },
+  "gemini-2.5-pro": { input: 1.25, output: 5.00 },
+  "gpt-4o": { input: 2.50, output: 10.00 },
+  "gpt-4o-mini": { input: 0.15, output: 0.60 },
+  "gpt-4-turbo": { input: 10.00, output: 30.00 },
+  "gpt-3.5-turbo": { input: 0.50, output: 1.50 },
+  "claude-3-opus": { input: 15.00, output: 75.00 },
+  "claude-3-sonnet": { input: 3.00, output: 15.00 },
+  "claude-3-haiku": { input: 0.25, output: 1.25 },
+  "default": { input: 1.00, output: 3.00 },
+};
+
+function estimateCost(modelId: string, inputTokens: number, outputTokens: number): number {
+  const pricing = MODEL_PRICING[modelId] || MODEL_PRICING["default"];
+  return (inputTokens / 1_000_000) * pricing.input + (outputTokens / 1_000_000) * pricing.output;
+}
+
+// GET /api/ai/usage — admin only, returns metered usage data
+app.get("/api/ai/usage", requireAdmin, (req, res) => {
+  const usage = loadAiUsage();
+  const { userId, companyId, providerId, startDate, endDate, limit } = req.query;
+  
+  let filtered = usage;
+  if (userId) filtered = filtered.filter(u => u.userId === userId);
+  if (companyId) filtered = filtered.filter(u => u.companyId === companyId);
+  if (providerId) filtered = filtered.filter(u => u.providerId === providerId);
+  if (startDate) filtered = filtered.filter(u => u.timestamp >= startDate);
+  if (endDate) filtered = filtered.filter(u => u.timestamp <= endDate);
+  
+  // Sort by timestamp descending
+  filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  
+  if (limit) filtered = filtered.slice(0, parseInt(limit as string));
+  
+  // Aggregate summary
+  const summary = usage.reduce((acc, u) => {
+    acc.totalRequests++;
+    acc.totalInputTokens += u.inputTokens;
+    acc.totalOutputTokens += u.outputTokens;
+    acc.totalTokens += u.totalTokens;
+    acc.totalEstimatedCost += u.estimatedCostUsd;
+    if (!acc.byUser[u.userId]) acc.byUser[u.userId] = { username: u.username, companyName: u.companyName, requests: 0, tokens: 0, cost: 0 };
+    if (!acc.byCompany[u.companyId]) acc.byCompany[u.companyId] = { companyName: u.companyName, requests: 0, tokens: 0, cost: 0 };
+    if (!acc.byProvider[u.providerId]) acc.byProvider[u.providerId] = { providerName: u.providerName, requests: 0, tokens: 0, cost: 0 };
+    acc.byUser[u.userId].requests++;
+    acc.byUser[u.userId].tokens += u.totalTokens;
+    acc.byUser[u.userId].cost += u.estimatedCostUsd;
+    acc.byCompany[u.companyId].requests++;
+    acc.byCompany[u.companyId].tokens += u.totalTokens;
+    acc.byCompany[u.companyId].cost += u.estimatedCostUsd;
+    acc.byProvider[u.providerId].requests++;
+    acc.byProvider[u.providerId].tokens += u.totalTokens;
+    acc.byProvider[u.providerId].cost += u.estimatedCostUsd;
+    return acc;
+  }, {
+    totalRequests: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalTokens: 0,
+    totalEstimatedCost: 0,
+    byUser: {} as Record<string, any>,
+    byCompany: {} as Record<string, any>,
+    byProvider: {} as Record<string, any>,
+  });
+  
+  res.json({ usage: filtered, summary });
+});
+
+// GET /api/ai/usage/me — current user's own usage
+app.get("/api/ai/usage/me", requireAuth, (req, res) => {
+  const usage = loadAiUsage();
+  const user = (req as any).user;
+  const myUsage = usage.filter(u => u.userId === user.id);
+  res.json({ usage: myUsage });
+});
+
+// GET /api/ai/usage/company/:companyId — company admin can see their company's usage
+app.get("/api/ai/usage/company/:companyId", requireAuth, (req, res) => {
+  const user = (req as any).user;
+  const companyId = req.params.companyId;
+  
+  // Check if user is admin or belongs to this company
+  if (user.role !== "admin" && user.companyId !== companyId) {
+    res.status(403).json({ error: "Not authorized to view this company's usage." });
+    return;
+  }
+  
+  const usage = loadAiUsage();
+  const companyUsage = usage.filter(u => u.companyId === companyId);
+  res.json({ usage: companyUsage });
+});
+
+// GET /api/ai/usage/export — export usage as CSV
+app.get("/api/ai/usage/export", requireAdmin, (req, res) => {
+  const usage = loadAiUsage();
+  const headers = ["ID", "User", "Company", "Provider", "Model", "Input Tokens", "Output Tokens", "Total Tokens", "Estimated Cost (USD)", "Timestamp", "Request Type"];
+  const rows = usage.map(u => [
+    u.id, u.username, u.companyName, u.providerName, u.modelName,
+    u.inputTokens, u.outputTokens, u.totalTokens, u.estimatedCostUsd.toFixed(6),
+    u.timestamp, u.requestType
+  ]);
+  const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="ai-usage-${new Date().toISOString().split("T")[0]}.csv"`);
+  res.send(csv);
+});
+
 // GET /api/keys - return saved API keys (without full key values)
-app.get("/api/keys", (_req, res) => {
+app.get("/api/keys", requireAdmin, (_req, res) => {
   const keys = loadApiKeys();
   const safe = keys.map(k => ({
     id: k.id,
@@ -1716,7 +2881,7 @@ app.get("/api/keys", (_req, res) => {
 });
 
 // POST /api/keys - add or update an API key
-app.post("/api/keys", express.json(), (req, res) => {
+app.post("/api/keys", requireAdmin, express.json(), (req, res) => {
   const { name, key, provider } = req.body;
   if (!name || !key) {
     res.status(400).json({ error: "Name and key are required." });
@@ -1746,7 +2911,7 @@ app.post("/api/keys", express.json(), (req, res) => {
 });
 
 // DELETE /api/keys/:id - remove an API key
-app.delete("/api/keys/:id", (req, res) => {
+app.delete("/api/keys/:id", requireAdmin, (req, res) => {
   aiClient = null;
   const keys = loadApiKeys().filter(k => k.id !== req.params.id);
   if (saveApiKeysToFile(keys)) {
@@ -1757,13 +2922,471 @@ app.delete("/api/keys/:id", (req, res) => {
 });
 
 // POST /api/keys/:id/activate - set a key as active
-app.post("/api/keys/:id/activate", (req, res) => {
+app.post("/api/keys/:id/activate", requireAdmin, (req, res) => {
   aiClient = null;
   const keys = loadApiKeys().map(k => ({ ...k, active: k.id === req.params.id }));
   if (saveApiKeysToFile(keys)) {
     res.json({ success: true, message: "API key activated." });
   } else {
     res.status(500).json({ error: "Failed to activate API key." });
+  }
+});
+
+// ── AI Provider Registry ───────────────────────────────────────────────
+// Supports two ways of configuring the AI:
+//
+//  1. Simple JSON (`ai-config.json`) — {"provider":"google-genai","model":...,"apiKey":...}
+//  2. Provider list (`ai-providers.json`) — the multi-AI format the lab
+//     pastes into the AI Manager:
+//       [ { "name":"DC-Hub AI", "vendor":"customendpoint", "apiKey":"...",
+//           "apiType":"chat-completions",
+//           "models":[ { "id":"...", "name":"...", "url":"https://.../chat/completions", ... } ] }, ... ]
+//
+// MULTIPLE providers can be active at once. Each active provider gets a
+// priority (0 = primary, then backups). Every AI call tries the active
+// providers in priority order until one responds (fallback chain).
+const AI_CONFIG_FILE = path.join(process.cwd(), "ai-config.json");
+const AI_PROVIDERS_FILE = path.join(process.cwd(), "ai-providers.json");
+
+interface AiRuntimeConfig {
+  provider: string;      // google-genai | openai | anthropic | custom
+  model: string;         // e.g. gemini-3.5-flash, gpt-4o, claude-3-5-sonnet
+  apiKey?: string;       // optional — falls back to the active saved key
+  baseUrl?: string;      // optional — custom endpoint
+  temperature?: number;  // optional inference temperature
+  extra?: Record<string, unknown>; // any other JSON fields the user typed
+}
+
+interface AiModelEntry {
+  id: string;
+  name?: string;
+  url?: string;
+  toolCalling?: boolean;
+  vision?: boolean;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+}
+
+interface AiProviderEntry {
+  id: string;            // unique slug derived from the name
+  name: string;
+  vendor: string;        // copilot | customendpoint | google-genai | openai | anthropic
+  apiKey?: string;
+  apiType?: string;      // chat-completions
+  settings?: Record<string, unknown>;
+  models: AiModelEntry[];
+  active?: boolean;
+  priority?: number;     // 0 = primary, 1 = first backup, ... (only meaningful when active)
+  activeModelId?: string;
+}
+
+const DEFAULT_AI_CONFIG: AiRuntimeConfig = {
+  provider: "google-genai",
+  model: "gemini-3.5-flash",
+};
+
+let aiRuntimeConfig: AiRuntimeConfig = { ...DEFAULT_AI_CONFIG };
+let aiProviders: AiProviderEntry[] = [];
+
+function loadAiRuntimeConfig(): AiRuntimeConfig {
+  try {
+    if (fs.existsSync(AI_CONFIG_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(AI_CONFIG_FILE, "utf-8"));
+      aiRuntimeConfig = {
+        ...DEFAULT_AI_CONFIG,
+        ...(parsed && typeof parsed === "object" ? parsed : {}),
+      };
+    }
+  } catch (err) {
+    console.warn("Failed to load ai-config.json:", err);
+  }
+  return aiRuntimeConfig;
+}
+
+function saveAiRuntimeConfig(cfg: AiRuntimeConfig): boolean {
+  try {
+    fs.writeFileSync(AI_CONFIG_FILE, JSON.stringify(cfg, null, 2), "utf-8");
+    aiRuntimeConfig = cfg;
+    aiClient = null; // invalidate cached client so it re-creates with new config
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadAiProviders(): AiProviderEntry[] {
+  try {
+    if (fs.existsSync(AI_PROVIDERS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(AI_PROVIDERS_FILE, "utf-8"));
+      if (Array.isArray(parsed)) aiProviders = parsed;
+    }
+  } catch (err) {
+    console.warn("Failed to load ai-providers.json:", err);
+  }
+  return aiProviders;
+}
+
+function saveAiProviders(providers: AiProviderEntry[]): boolean {
+  try {
+    fs.writeFileSync(AI_PROVIDERS_FILE, JSON.stringify(providers, null, 2), "utf-8");
+    aiProviders = providers;
+    aiClient = null;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+loadAiRuntimeConfig();
+loadAiProviders();
+
+/** The model every Gemini AI call should use (from the simple JSON config). */
+function getAiModel(): string {
+  return aiRuntimeConfig.model || DEFAULT_AI_CONFIG.model;
+}
+
+/** The currently active providers from the registry, in priority order. */
+function getActiveAiProviders(): AiProviderEntry[] {
+  return aiProviders
+    .filter(p => p.active)
+    .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+}
+
+/** The primary (first) active provider, or null. */
+function getActiveAiProvider(): AiProviderEntry | null {
+  return getActiveAiProviders()[0] || null;
+}
+
+/** True when any active provider is an OpenAI-compatible HTTP endpoint. */
+function isOpenAiCompatibleActive(): boolean {
+  return getActiveAiProviders().some(
+    p => (p.vendor === "customendpoint" || p.apiType === "chat-completions") && !!p.apiKey && p.models.length > 0
+  );
+}
+
+// GET /api/ai/config — return the current AI runtime config (no secrets)
+app.get("/api/ai/config", requireAdmin, (_req, res) => {
+  const cfg = loadAiRuntimeConfig();
+  res.json({
+    config: {
+      provider: cfg.provider,
+      model: cfg.model,
+      baseUrl: cfg.baseUrl || "",
+      temperature: cfg.temperature ?? 0.7,
+      extra: cfg.extra || {},
+    },
+    hasApiKey: !!cfg.apiKey || !!activeApiKey || !!getActiveAiProvider(),
+  });
+});
+
+// POST /api/ai/config — save a simple JSON AI config (full JSON body accepted).
+// Provider is auto-detected from the key format when not explicitly given.
+app.post("/api/ai/config", requireAdmin, express.json(), (req, res) => {
+  const body = req.body || {};
+  // Accept either a raw JSON object or { config: {...} }
+  const raw = body.config && typeof body.config === "object" ? body.config : body;
+  // apiKey: explicit "" clears it (falls back to the active saved key);
+  // missing/undefined keeps whatever was set before.
+  let key = aiRuntimeConfig.apiKey;
+  if (raw.apiKey !== undefined) key = raw.apiKey ? String(raw.apiKey) : undefined;
+  let provider = raw.provider ? String(raw.provider) : aiRuntimeConfig.provider;
+  if (!raw.provider && key) {
+    if (key.startsWith("AIza")) provider = "google-genai";
+    else if (key.startsWith("sk-ant-")) provider = "anthropic";
+    else if (key.startsWith("sk-")) provider = "openai";
+  }
+  // When the provider changed (or was just detected) and no model was given,
+  // pick that provider's default model instead of keeping the old one.
+  const providerChanged = provider !== aiRuntimeConfig.provider;
+  const model = raw.model
+    ? String(raw.model)
+    : providerChanged
+      ? (provider === "openai" ? "gpt-4o" : provider === "anthropic" ? "claude-3-5-sonnet" : "gemini-3.5-flash")
+      : aiRuntimeConfig.model || "gemini-3.5-flash";
+  const next: AiRuntimeConfig = {
+    provider,
+    model,
+    apiKey: key,
+    baseUrl: raw.baseUrl ? String(raw.baseUrl) : aiRuntimeConfig.baseUrl,
+    temperature: raw.temperature != null ? Number(raw.temperature) : aiRuntimeConfig.temperature,
+    extra: raw.extra && typeof raw.extra === "object" ? raw.extra : aiRuntimeConfig.extra,
+  };
+  if (saveAiRuntimeConfig(next)) {
+    // Activating a simple config deactivates any registry provider
+    aiProviders = aiProviders.map(p => ({ ...p, active: false }));
+    saveAiProviders(aiProviders);
+    res.json({ success: true, config: { provider: next.provider, model: next.model, baseUrl: next.baseUrl || "", temperature: next.temperature ?? 0.7 } });
+  } else {
+    res.status(500).json({ error: "Failed to save AI config." });
+  }
+});
+
+// ── AI Provider Registry endpoints ──────────────────────────────────────
+
+/** Slugify a provider name into a stable id. */
+function providerIdFromName(name: string): string {
+  const slug = String(name || "ai").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "ai";
+}
+
+/**
+ * Read AI provider settings from data files or source code without evaluating it.
+ * This deliberately supports configuration literals only; uploaded code is never
+ * imported, compiled, or executed by the server.
+ */
+function parseAiProviderSource(source: string): { providers: any[]; format: string } {
+  const text = String(source || "").replace(/^\uFEFF/, "").trim();
+  if (!text) throw new Error("The file is empty.");
+
+  const parseCandidate = (candidate: string): any | null => {
+    try { return JSON.parse(candidate); } catch { /* try a safe, JSON-like config literal below */ }
+    try {
+      const normalized = candidate
+        .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1").replace(/(^|\s)#.*$/gm, "$1")
+        .replace(/\bTrue\b/g, "true").replace(/\bFalse\b/g, "false").replace(/\bNone\b/g, "null")
+        .replace(/,\s*([}\]])/g, "$1")
+        .replace(/([,{]\s*)([A-Za-z_$][\w$-]*)(\s*:)/g, '$1"$2"$3')
+        .replace(/'((?:\\.|[^'\\])*)'/g, (_match, value) => JSON.stringify(value.replace(/\\'/g, "'")));
+      return JSON.parse(normalized);
+    } catch { return null; }
+  };
+  const direct = parseCandidate(text);
+  if (direct) return { providers: Array.isArray(direct) ? direct : Array.isArray(direct.providers) ? direct.providers : [direct], format: "JSON" };
+
+  // Find balanced object/array literals in Python, JS, TS, YAML-exported code,
+  // etc. Try the largest candidates first so a `providers = [...]` list wins.
+  const candidates: string[] = [];
+  for (let start = 0; start < text.length; start++) {
+    const opener = text[start];
+    if (opener !== "{" && opener !== "[") continue;
+    const stack = [opener === "{" ? "}" : "]"];
+    let quote = "";
+    let escaped = false;
+    for (let end = start + 1; end < text.length; end++) {
+      const char = text[end];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === quote) quote = "";
+        continue;
+      }
+      if (char === '"' || char === "'") { quote = char; continue; }
+      if (char === "{" || char === "[") stack.push(char === "{" ? "}" : "]");
+      else if (char === stack[stack.length - 1]) {
+        stack.pop();
+        if (!stack.length) { candidates.push(text.slice(start, end + 1)); break; }
+      }
+    }
+  }
+  candidates.sort((a, b) => b.length - a.length);
+  for (const candidate of candidates) {
+    const parsed = parseCandidate(candidate);
+    const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.providers) ? parsed.providers : parsed && typeof parsed === "object" ? [parsed] : [];
+    if (list.some(item => item && typeof item === "object" && (item.name || item.models || item.apiKey || item.api_key))) {
+      return { providers: list, format: "source code" };
+    }
+  }
+
+  // .env, Python constants, and other KEY=value files can still activate a
+  // standard provider when they contain an API key.
+  const key = text.match(/(?:OPENAI_API_KEY|GOOGLE_API_KEY|GEMINI_API_KEY|ANTHROPIC_API_KEY|api[_-]?key)\s*[=:]\s*["']?([^\s"'#;]+)["']?/i)?.[1];
+  if (key) {
+    const provider = /(?:GOOGLE|GEMINI|AIza)/i.test(text + key) ? "google-genai" : /(?:ANTHROPIC|sk-ant-)/i.test(text + key) ? "anthropic" : "openai";
+    const model = text.match(/(?:MODEL|model)\s*[=:]\s*["']?([^\s"'#;]+)/)?.[1] || (provider === "openai" ? "gpt-4o" : provider === "anthropic" ? "claude-3-5-sonnet" : "gemini-3.5-flash");
+    return { providers: [{ name: `${provider} imported config`, vendor: provider, apiKey: key, models: [{ id: model }] }], format: "environment/source settings" };
+  }
+  throw new Error("No AI provider configuration was found. Include a provider object/list or API key settings.");
+}
+
+// POST /api/ai/providers — register a pasted provider list (or single object).
+// Accepts either the array format or one object; existing providers are
+// updated, new ones added; nothing is activated automatically.
+app.post("/api/ai/providers", requireAdmin, express.json(), (req, res) => {
+  const body = req.body || {};
+  let detectedFormat = "JSON";
+  let rawList: any[];
+  try {
+    if (typeof body.source === "string") {
+      const parsed = parseAiProviderSource(body.source);
+      rawList = parsed.providers;
+      detectedFormat = parsed.format;
+    } else {
+      rawList = Array.isArray(body) ? body : Array.isArray(body.providers) ? body.providers : [body];
+    }
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || "Could not read the AI configuration." });
+    return;
+  }
+  // Also accept the application's simple runtime shape:
+  // { provider, model, apiKey, baseUrl }. This makes ai-config.json and its
+  // Python/TypeScript equivalents importable alongside the multi-provider list.
+  rawList = rawList.map((raw: any) => {
+    if (raw && typeof raw === "object" && !raw.name && raw.provider && (raw.apiKey || raw.api_key || raw.key)) {
+      const provider = String(raw.provider);
+      const model = String(raw.model || (provider === "openai" ? "gpt-4o" : provider === "anthropic" ? "claude-3-5-sonnet" : "gemini-3.5-flash"));
+      return {
+        name: `${provider} imported config`, vendor: provider,
+        apiKey: raw.apiKey || raw.api_key || raw.key,
+        apiType: raw.apiType || "chat-completions",
+        models: [{ id: model, url: raw.baseUrl || raw.baseURL || raw.url || "" }],
+      };
+    }
+    return raw;
+  });
+  const next: AiProviderEntry[] = [];
+  for (const raw of rawList) {
+    if (!raw || typeof raw !== "object" || !raw.name) continue;
+    const id = providerIdFromName(raw.name);
+    const models = (Array.isArray(raw.models) ? raw.models : []).map((m: any) => ({
+      id: String(m.id || ""),
+      name: m.name ? String(m.name) : String(m.id || ""),
+      url: m.url ? String(m.url) : "",
+      toolCalling: !!m.toolCalling,
+      vision: !!m.vision,
+      maxInputTokens: m.maxInputTokens ? Number(m.maxInputTokens) : undefined,
+      maxOutputTokens: m.maxOutputTokens ? Number(m.maxOutputTokens) : undefined,
+    }));
+    next.push({
+      id,
+      name: String(raw.name),
+      vendor: String(raw.vendor || "customendpoint"),
+      apiKey: (raw.apiKey || raw.api_key || raw.key) ? String(raw.apiKey || raw.api_key || raw.key) : undefined,
+      apiType: raw.apiType ? String(raw.apiType) : "chat-completions",
+      settings: raw.settings && typeof raw.settings === "object" ? raw.settings : undefined,
+      models,
+      // Source imports are intentionally activated immediately so the imported
+      // AI becomes available without a second manual step.
+      active: typeof body.source === "string",
+      activeModelId: models.length ? models[0].id : undefined,
+    });
+  }
+  if (!next.length) {
+    res.status(400).json({ error: "No valid AI providers found in the pasted JSON." });
+    return;
+  }
+  // Merge: keep activation state + priority + selected model for same-id providers
+  const merged = [...aiProviders];
+  for (const entry of next) {
+    const idx = merged.findIndex(p => p.id === entry.id);
+    if (idx >= 0) {
+      merged[idx] = { ...merged[idx], ...entry, active: typeof body.source === "string" ? true : merged[idx].active, priority: merged[idx].priority, activeModelId: merged[idx].activeModelId || entry.activeModelId };
+    } else {
+      merged.push(entry);
+    }
+  }
+  if (saveAiProviders(merged)) {
+    const activatedCount = typeof body.source === "string" ? next.length : 0;
+    res.json({ success: true, format: detectedFormat, activatedCount, providers: merged.map(p => ({ id: p.id, name: p.name, vendor: p.vendor, apiType: p.apiType, models: p.models, active: !!p.active, priority: p.priority ?? null, activeModelId: p.activeModelId })) });
+  } else {
+    res.status(500).json({ error: "Failed to save AI providers." });
+  }
+});
+
+// GET /api/ai/providers — list registered providers (no apiKeys)
+app.get("/api/ai/providers", requireAdmin, (_req, res) => {
+  res.json({
+    providers: aiProviders.map(p => ({
+      id: p.id,
+      name: p.name,
+      vendor: p.vendor,
+      apiType: p.apiType,
+      hasApiKey: !!p.apiKey,
+      models: p.models,
+      active: !!p.active,
+      priority: p.priority ?? null,
+      activeModelId: p.activeModelId,
+    })),
+    activeProviders: getActiveAiProviders().map(p => p.id),
+  });
+});
+
+// POST /api/ai/providers/:id/activate — add a provider to the active set
+// (multiple can be active; priority 0 = primary, then backups).
+app.post("/api/ai/providers/:id/activate", requireAdmin, express.json(), (req, res) => {
+  const id = req.params.id;
+  const modelId = req.body && req.body.modelId ? String(req.body.modelId) : undefined;
+  const provider = aiProviders.find(p => p.id === id);
+  if (!provider) {
+    res.status(404).json({ error: `Provider not found: ${id}` });
+    return;
+  }
+  if (provider.vendor !== "copilot" && (!provider.apiKey || !provider.models.length)) {
+    res.status(400).json({ error: `"${provider.name}" has no usable API endpoint (missing apiKey/models).` });
+    return;
+  }
+  // If already active, just update the model selection
+  if (provider.active) {
+    if (modelId && provider.models.some(m => m.id === modelId)) {
+      aiProviders = aiProviders.map(p => p.id === id ? { ...p, activeModelId: modelId } : p);
+      saveAiProviders(aiProviders);
+    }
+    res.json({ success: true, active: getActiveAiProviders().map(p => p.id), model: modelId || provider.activeModelId });
+    return;
+  }
+  // Assign the next priority slot (after the highest existing priority)
+  const active = getActiveAiProviders();
+  const nextPriority = active.length ? Math.max(...active.map(p => p.priority ?? 0)) + 1 : 0;
+  aiProviders = aiProviders.map(p => p.id === id ? { ...p, active: true, priority: nextPriority, ...(modelId ? { activeModelId: modelId } : {}) } : p);
+  if (saveAiProviders(aiProviders)) {
+    res.json({ success: true, active: getActiveAiProviders().map(p => p.id), priority: nextPriority, model: modelId || provider.activeModelId });
+  } else {
+    res.status(500).json({ error: "Failed to save AI providers." });
+  }
+});
+
+// POST /api/ai/providers/:id/deactivate — remove a provider from the active set
+app.post("/api/ai/providers/:id/deactivate", requireAdmin, (req, res) => {
+  const id = req.params.id;
+  aiProviders = aiProviders.map(p => p.id === id ? { ...p, active: false, priority: undefined } : p);
+  if (saveAiProviders(aiProviders)) {
+    res.json({ success: true, active: getActiveAiProviders().map(p => p.id) });
+  } else {
+    res.status(500).json({ error: "Failed to save AI providers." });
+  }
+});
+
+// POST /api/ai/providers/:id/priority — set the priority of an active provider
+// (0 = primary, 1 = first backup, ...). Other active providers shift around it.
+app.post("/api/ai/providers/:id/priority", requireAdmin, express.json(), (req, res) => {
+  const id = req.params.id;
+  const target = req.body && req.body.priority != null ? Number(req.body.priority) : NaN;
+  if (isNaN(target) || target < 0) {
+    res.status(400).json({ error: "priority must be a non-negative number." });
+    return;
+  }
+  const provider = aiProviders.find(p => p.id === id);
+  if (!provider) {
+    res.status(404).json({ error: `Provider not found: ${id}` });
+    return;
+  }
+  if (!provider.active) {
+    res.status(400).json({ error: `"${provider.name}" is not active.` });
+    return;
+  }
+  const active = getActiveAiProviders().filter(p => p.id !== id);
+  const maxSlot = active.length;
+  const slot = Math.max(0, Math.min(target, maxSlot));
+  // Rebuild priorities: insert this provider at `slot`, others fill the rest
+  const ordered = [...active];
+  ordered.splice(slot, 0, provider);
+  const priorityMap = new Map<string, number>();
+  ordered.forEach((p, i) => priorityMap.set(p.id, i));
+  aiProviders = aiProviders.map(p => priorityMap.has(p.id) ? { ...p, priority: priorityMap.get(p.id) } : p);
+  if (saveAiProviders(aiProviders)) {
+    res.json({ success: true, active: getActiveAiProviders().map(p => ({ id: p.id, priority: p.priority })) });
+  } else {
+    res.status(500).json({ error: "Failed to save AI providers." });
+  }
+});
+
+// DELETE /api/ai/providers/:id — remove a provider from the registry
+app.delete("/api/ai/providers/:id", requireAdmin, (req, res) => {
+  const id = req.params.id;
+  aiProviders = aiProviders.filter(p => p.id !== id);
+  if (saveAiProviders(aiProviders)) {
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: "Failed to remove provider." });
   }
 });
 
@@ -1926,6 +3549,32 @@ function loadSystemConfig(): SystemConfig {
   return fallback;
 }
 
+function sanitizeFolderName(name: string): string {
+  return name
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_") // Replace invalid Windows chars
+    .replace(/^\.+$/, "_") // Replace dots-only names
+    .trim()
+    .substring(0, 200); // Limit length
+}
+
+function createCompanyUserFolders(companyName: string, userName?: string): void {
+  const storage = loadSystemConfig();
+  const basePath = storage.storageFolder;
+  if (!basePath) return;
+
+  const companyFolder = path.join(basePath, sanitizeFolderName(companyName));
+  if (!fs.existsSync(companyFolder)) {
+    fs.mkdirSync(companyFolder, { recursive: true });
+  }
+
+  if (userName) {
+    const userFolder = path.join(companyFolder, sanitizeFolderName(userName));
+    if (!fs.existsSync(userFolder)) {
+      fs.mkdirSync(userFolder, { recursive: true });
+    }
+  }
+}
+
 function saveSystemConfig(config: SystemConfig): boolean {
   try {
     fs.writeFileSync(SYSTEM_CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
@@ -1947,8 +3596,8 @@ app.get("/api/system/config", (_req, res) => {
 
 // POST /api/system/config — update shared config (centralized pipeline setup)
 // Agliner Segmentation and Ortho Staging/Render read this config, so all
-// pipeline parameters live in one place (the main system).
-app.post("/api/system/config", express.json(), (req, res) => {
+// pipeline parameters live in one place (the main system). Admin-only.
+app.post("/api/system/config", requireAdmin, express.json(), (req, res) => {
   const { storageFolder, mainServerUrl, stages, expansion, shellMm, undercutDeg } = req.body;
   const current = loadSystemConfig();
   const next: SystemConfig = {
@@ -1974,10 +3623,10 @@ app.post("/api/system/config", express.json(), (req, res) => {
   }
 });
 
-// GET /api/systems/status — health check for all three WhiteSmile systems.
-// The satellites are managed by this server, so status reflects whether the
-// child processes are alive (with a short HTTP probe as a readiness check).
-app.get("/api/systems/status", async (_req, res) => {
+// GET /api/systems/status — health check for the satellite systems
+// (Agliner Segmentation + Ortho Staging & Render). Any authenticated user
+// whose company has the satellite packs enabled sees these panels.
+app.get("/api/systems/status", requireAuth, async (req, res) => {
   async function probe(url: string): Promise<boolean> {
     try {
       const ctrl = new AbortController();
@@ -1990,21 +3639,24 @@ app.get("/api/systems/status", async (_req, res) => {
     }
   }
   const [aglinerUp, orthoUp] = await Promise.all([
-    probe("http://localhost:5173/"),
+    probe("http://localhost:5173/agliner/"),
     probe("http://localhost:8765/api/status"),
   ]);
   const storage = loadSystemConfig();
+  const hostHeader = req.headers.host || `localhost:${PORT}`;
+  const protocol = req.protocol || "http";
+  const baseUrl = `${protocol}://${hostHeader}`;
   res.json({
-    main: { up: true, url: `http://localhost:${PORT}` },
+    main: { up: true, url: baseUrl },
     agliner: {
       up: aglinerUp,
-      url: `http://localhost:${PORT}/agliner/`,
+      url: `${baseUrl}/agliner/`,
       managed: satelliteAlive("agliner"),
       port: satellites.agliner.port,
     },
     ortho: {
       up: orthoUp,
-      url: `http://localhost:${PORT}/ortho/`,
+      url: `${baseUrl}/ortho/`,
       managed: satelliteAlive("ortho"),
       port: satellites.ortho.port,
     },
@@ -2522,7 +4174,7 @@ Respond ONLY JSON: {"cut_ratio": 0.3}. Default 0.3, clamp 0.1-0.6.
   }
 });
 
-// POST /api/ai/staging-plan — ortho staging: per-tooth movement targets
+// POST /api/ai/staging-plan — ortho staging: per-tooth movement targets with Core Memory
 app.post("/api/ai/staging-plan", express.json({ limit: "10mb" }), async (req, res) => {
   const { prescription, tooth_numbers, num_stages, case_name } = req.body;
   const ai = getGeminiClient();
@@ -2543,8 +4195,13 @@ app.post("/api/ai/staging-plan", express.json({ limit: "10mb" }), async (req, re
     const prompt = `
 ${coreMemory.analysisInstructions}
 
-You are an expert orthodontic treatment planner for clear aligner therapy.
+You are an expert orthodontic treatment planner for WhiteSmile Clear Aligner Therapy.
 Given a prescription and a list of tooth numbers (FDI), output a JSON object describing per-tooth movement targets.
+
+**MEDICAL-GRADE REQUIREMENTS:**
+- This treatment plan will be used to manufacture clear aligners for patient treatment
+- All movements must comply with biological staging limits per Core Memory
+- Zero tolerance for unsafe movement recommendations
 
 Prescription:
 ${prescription || "No prescription provided — generate a standard Class I alignment plan."}
@@ -2568,23 +4225,34 @@ Output ONLY a valid JSON object (no markdown, no code fences) with this EXACT st
   },
   "num_stages": ${stages},
   "shell_thickness_mm": 0.75,
-  "notes": "<brief clinical summary of the plan>"
+  "notes": "<brief clinical summary of the plan referencing Core Memory guidelines>"
 }
 
-Rules:
+Rules (STRICTLY ENFORCED per Core Memory):
 - tx,ty,tz are TOTAL translations in mm from start to end of treatment.
 - rx,ry,rz are TOTAL rotations in degrees.
 - Teeth not mentioned in the prescription get all-zero movements.
 - FDI anatomy: 11-18 = upper right, 21-28 = upper left, 31-38 = lower left, 41-48 = lower right. 1x/2x = incisors/canines/premolars (anterior), 3x/4x = premolars/molars (posterior).
 - Anteriors (incisors/canines) tolerate more movement; molars should move the least (smaller tx/ty/rz).
-- Set attachment_type for teeth requiring attachments: canines and premolars for rotational/translational control (use "beveled" for canines, "ellipsoid" for premolars). Never place attachments on incisors unless strictly required.
-- Respect biological staging limits: translation max 0.25mm/stage, rotation max 2°/stage, extrusion max 0.15-0.20mm/stage, intrusion max 0.20mm/stage.
+- Set attachment_type for teeth requiring attachments per Core Memory guidelines:
+  * Beveled Rectangular (Horizontal): Premolars/canines (2-4mm width) for intrusion, extrusion, and root torque
+  * Beveled Rectangular (Vertical): Incisors/canines for rotation control
+  * Ellipsoidal / Dome Attachments: Posteriors for general retention
+  * Never place attachments on incisors unless strictly required
+- Respect biological staging limits (per Core Memory):
+  * Translation max 0.25mm/stage
+  * Rotation max 2°/stage
+  * Extrusion max 0.15-0.20mm/stage
+  * Intrusion max 0.20mm/stage
+  * Root movement max 0.25mm/stage
+  * Torque max 2°/stage
+- Total movement per tooth = per-stage limit × number of stages (with absolute caps)
 - Return ONLY the JSON.
 `;
     const response = await generateContentWithRetry(ai, {
       model: "gemini-3.5-flash",
       contents: [{ parts: [{ text: prompt }] }],
-      config: { temperature: 0.2, responseMimeType: "application/json" },
+      config: { temperature: 0.1, responseMimeType: "application/json" },
     });
 
     const cleaned = (response.text || "{}").replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
@@ -2613,11 +4281,11 @@ Rules:
   }
 });
 
-app.get("/api/core-memory", (_req, res) => {
+app.get("/api/core-memory", requireAdmin, (_req, res) => {
   res.json(getCoreMemory());
 });
 
-app.post("/api/core-memory", express.json(), (req, res) => {
+app.post("/api/core-memory", requireAdmin, express.json(), (req, res) => {
   const { chatInstructions, analysisInstructions } = req.body;
   if (typeof chatInstructions !== "string" || typeof analysisInstructions !== "string") {
     res.status(400).json({ error: "Invalid core memory fields" });
@@ -2631,7 +4299,7 @@ app.post("/api/core-memory", express.json(), (req, res) => {
   }
 });
 
-// POST /api/design-optimization - AI-assisted design refinement (CoT)
+// POST /api/design-optimization - AI-assisted design refinement (CoT) with Core Memory
 app.post("/api/design-optimization", express.json({ limit: '50mb' }), async (req, res) => {
   const { currentParameters, context, isPrecision = false } = req.body;
   const ai = getGeminiClient();
@@ -2646,44 +4314,58 @@ app.post("/api/design-optimization", express.json({ limit: '50mb' }), async (req
   }
 
   try {
+    const coreMemory = getCoreMemory();
+    
     const prompt = `
-      You are the world's leading orthodontist and Principal CAD Design Engineer.
-      Review these current retainer/aligner design parameters and provide optimized adjustments for physical print accuracy, structural biomechanical safety, and maximum clinical effectiveness.
-      
-      Perform an expert Chain-of-Thought (CoT) analysis:
-      1. Analyze anatomical constraints (arch geometry, tooth alignment, interproximal undercut structures).
-      2. Evaluate trim-line positioning and cut-path styles (scalloped vs straight-cut) against the gingival margin.
-      3. Recommend biomaterial selection and thickness optimization (bruxism relief, elastic force control, active vs passive appliance).
-      4. Suggest precise attachment placement strategies (rectangular beveled, ellipsoidal) for active tooth movement.
-      5. Finalize optimized parameters.
-      
-      ${isPrecision ? `
-      CRITICAL: Clinical Precision Mode is ENABLED. 
-      - Enforce a strict marginal accuracy. Maintain trim line exactly 0.5mm coronal to the gingival margin with sub-millimeter tolerances.
-      - Apply specialized interproximal wax block-outs to protect dental papilla.
-      - Optimize shell thickness to 1.0mm to balance orthodontic force delivery with patient compliance.
-      ` : "Provide standard, high-efficiency clinical CAD optimization (defaulting to straight trim line 1.5mm above gumline for maximum retention)."}
-      
-      Current Parameters: ${JSON.stringify(currentParameters)}
-      Design Context: ${JSON.stringify(context)}
-      
-      Return as a JSON object with:
-      - 'optimizedParameters': a JSON object containing the same structure as input:
-         * 'appliance': "Essix" or "Hawley" or "Other"
-         * 'arch': "Upper" or "Lower" or "Both"
-         * 'trimLineType': "scalloped" or "straight" or "beveled"
-         * 'trimScallopOffset': number (float)
-         * 'shellThickness': number (float)
-         * 'selectedMaterial': string
-      - 'reasoning': a comprehensive clinical explanation of your Chain-of-Thought biomechanical analysis
-      - 'anatomicalValidation': a formal clinical validation statement certifying safety and tolerance compliance.
-    `;
+${coreMemory.analysisInstructions}
+
+You are the world's leading orthodontist and Principal CAD Design Engineer for WhiteSmile Clear Aligners.
+Review these current retainer/aligner design parameters and provide optimized adjustments for physical print accuracy, structural biomechanical safety, and maximum clinical effectiveness.
+
+**MEDICAL-GRADE REQUIREMENTS:**
+- This design will be 3D printed and used to thermoform aligners for patient treatment
+- Zero tolerance for manufacturing defects or biomechanical errors
+- All parameters must comply with FDA-cleared clinical guidelines
+
+Perform an expert Chain-of-Thought (CoT) analysis:
+1. Analyze anatomical constraints (arch geometry, tooth alignment, interproximal undercut structures, gingival morphology).
+2. Evaluate trim-line positioning and cut-path styles (scalloped vs straight-cut vs beveled) against the gingival margin with sub-millimeter precision.
+3. Recommend biomaterial selection and thickness optimization (bruxism relief, elastic force control, active vs passive appliance) based on movement magnitude.
+4. Suggest precise attachment placement strategies (rectangular beveled horizontal/vertical, ellipsoidal) for active tooth movement control.
+5. Validate all parameters against biological staging limits (translation ≤0.25mm/stage, rotation ≤2°/stage, extrusion ≤0.2mm/stage, intrusion ≤0.2mm/stage).
+6. Finalize optimized parameters with clinical justification.
+
+${isPrecision ? `
+CRITICAL: CLINICAL PRECISION MODE ENABLED — MEDICAL DEVICE MANUFACTURING STANDARDS
+- Enforce strict marginal accuracy: trim line exactly 0.5mm coronal to gingival margin (±0.1mm tolerance)
+- Apply specialized interproximal wax block-outs to protect dental papilla and prevent gingival impingement
+- Optimize shell thickness to 1.0mm for balanced orthodontic force delivery with patient compliance
+- Ensure all undercut relief paths follow path of insertion with ≥0.2mm clearance
+- Validate interproximal contact preservation (≥0.1mm contact area maintained)
+- Confirm no sharp edges or stress concentrators in final geometry
+` : "Provide standard high-efficiency clinical CAD optimization with straight trim line 1.5mm above gumline for maximum retention."}
+
+Current Parameters: ${JSON.stringify(currentParameters)}
+Design Context: ${JSON.stringify(context)}
+
+Return as a JSON object with:
+- 'optimizedParameters': a JSON object containing the same structure as input:
+   * 'appliance': "Essix" or "Hawley" or "Other"
+   * 'arch': "Upper" or "Lower" or "Both"
+   * 'trimLineType': "scalloped" or "straight" or "beveled"
+   * 'trimScallopOffset': number (float, mm)
+   * 'shellThickness': number (float, mm)
+   * 'selectedMaterial': string
+- 'reasoning': a comprehensive clinical explanation of your Chain-of-Thought biomechanical analysis referencing Core Memory guidelines
+- 'anatomicalValidation': a formal clinical validation statement certifying safety and tolerance compliance per WhiteSmile Core Memory
+`;
 
     const response = await generateContentWithRetry(ai, {
       model: "gemini-3.5-flash",
       contents: [{ parts: [{ text: prompt }] }],
       config: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        temperature: 0.1
       }
     });
 
@@ -2698,7 +4380,7 @@ app.post("/api/design-optimization", express.json({ limit: '50mb' }), async (req
   }
 });
 
-// POST /api/quality-audit - Dental safety rule cross-reference
+// POST /api/quality-audit - Dental safety rule cross-reference with Core Memory
 app.post("/api/quality-audit", express.json({ limit: '50mb' }), async (req, res) => {
   const { parameters } = req.body;
   const ai = getGeminiClient();
@@ -2713,22 +4395,54 @@ app.post("/api/quality-audit", express.json({ limit: '50mb' }), async (req, res)
   }
 
   try {
+    const coreMemory = getCoreMemory();
+    
     const prompt = `
-      You are an expert dental safety auditor.
-      Perform a quality audit on these retainer design parameters against industry safety rules (e.g., adequate thickness, coverage for retention, trim line safety).
+${coreMemory.analysisInstructions}
 
-      Parameters: ${JSON.stringify(parameters)}
-      
-      Identify any potential manufacturing flaws or clinical risks.
-      
-      Return JSON: { "safe": boolean, "flaws": string[], "recommendations": string[] }
-    `;
+You are an expert dental safety auditor for WhiteSmile Clear Aligners — a medical device manufacturer.
+Perform a comprehensive quality audit on these retainer/aligner design parameters against industry safety rules and FDA-cleared clinical guidelines.
+
+**MEDICAL-GRADE AUDIT REQUIREMENTS:**
+- This design will be 3D printed and thermoformed for patient use
+- Zero tolerance for manufacturing defects or clinical safety violations
+- All findings must reference specific Core Memory clinical guidelines
+
+Audit against these critical safety rules:
+1. **Biomaterial & Thickness Compliance**: Essix aligners must use PETG/thermoform materials at 0.75mm, 1.0mm, or 1.5mm only
+2. **Biomechanical Staging Limits**: Per-tooth movement per stage must not exceed:
+   - Translation: 0.25mm max
+   - Rotation: 2° max
+   - Extrusion: 0.20mm max
+   - Intrusion: 0.20mm max
+   - Root movement: 0.25mm max
+   - Torque: 2° max
+3. **Trim Line Safety**: Scalloped 0.5-1.0mm coronal to gingival margin; Straight 1.5-2.0mm above zenith
+4. **Undercut Relief**: All interproximal undercuts must have wax block-out relative to path of insertion
+5. **Attachment Safety**: Beveled rectangular for torque/intrusion; Ellipsoidal for retention; Never on incisors unless required
+6. **Frenum Relief**: Labial/lingual frenum relief zones mandatory
+7. **Scan Quality**: Flag any mention of bubbles, voids, incomplete captures, distortions
+8. **Arch Specification**: Must be explicit (Maxillary, Mandibular, or Dual)
+9. **Manufacturing Feasibility**: No sharp edges, stress concentrators, or non-manifold geometry
+
+Parameters: ${JSON.stringify(parameters)}
+
+Identify any potential manufacturing flaws or clinical risks with specific Core Memory rule references.
+
+Return JSON: { 
+  "safe": boolean, 
+  "flaws": string[], 
+  "recommendations": string[],
+  "coreMemoryReferences": string[]
+}
+`;
 
     const response = await generateContentWithRetry(ai, {
       model: "gemini-3.5-flash",
       contents: [{ parts: [{ text: prompt }] }],
       config: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        temperature: 0.1
       }
     });
 
@@ -2753,7 +4467,7 @@ app.post("/api/cad-editor", express.json({ limit: '50mb' }), async (req, res) =>
 });
 
 // POST /api/orthodontic-chat - Interactive Orthodontic CAD Co-pilot Chat
-app.post("/api/orthodontic-chat", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/orthodontic-chat", requireAuth, express.json({ limit: '10mb' }), async (req: AuthedRequest, res) => {
   const { messages, currentDesign } = req.body;
   const ai = getGeminiClient();
   if (!ai) {
@@ -2813,7 +4527,12 @@ Format your responses using clean, readable markdown with bold headers and lists
       config: {
         systemInstruction: chatSystemInstructions,
         temperature: 0.7
-      }
+      },
+      _userId: req.user!.id,
+      _username: req.user!.username,
+      _companyId: req.user!.companyId || "none",
+      _companyName: req.company?.name || "none",
+      _requestType: "chat",
     });
 
     res.json({ text: response.text });
@@ -2822,39 +4541,52 @@ Format your responses using clean, readable markdown with bold headers and lists
     res.status(500).json({ error: "AI chat copilot is currently unavailable. Please check your API key.", code: "AI_ERROR" });
   }
 });
-app.get("/api/history", (_req, res) => {
+app.get("/api/history", requireAuth, (req: AuthedRequest, res) => {
   const history = readHistory();
-  res.json(history);
+  res.json(filterHistoryForUser(history, req.user!, req.company || null));
 });
 
-// DELETE /api/history/:id - Clear a specific case
-app.delete("/api/history/:id", (req, res) => {
+// DELETE /api/history/:id - Clear a specific case (owner or admin only)
+app.delete("/api/history/:id", requireAuth, (req: AuthedRequest, res) => {
   const { id } = req.params;
   const history = readHistory();
+  const target = history.find((item) => item.id === id);
+  if (!target) {
+    res.status(404).json({ error: "Case not found" });
+    return;
+  }
+  if (!canAccessCase(req.user!, req.company || null, target)) {
+    res.status(403).json({ error: "You do not have permission to delete this case." });
+    return;
+  }
   const updatedHistory = history.filter((item) => item.id !== id);
   writeHistory(updatedHistory);
   res.json({ success: true, message: `Case ${id} deleted.` });
 });
 
-// PUT /api/history/:id - Update a specific case results/status (for manual edits and proceeding to manufacture)
-app.put("/api/history/:id", (req, res) => {
+// PUT /api/history/:id - Update a specific case results/status (owner or admin only)
+app.put("/api/history/:id", requireAuth, (req: AuthedRequest, res) => {
   const { id } = req.params;
   const { result, status } = req.body;
   const history = readHistory();
   const index = history.findIndex((item) => item.id === id);
-  if (index !== -1) {
-    if (result) history[index].result = result;
-    if (status) history[index].status = status;
-    writeHistory(history);
-    res.json({ success: true, case: history[index] });
-  } else {
+  if (index === -1) {
     res.status(404).json({ error: "Case not found" });
+    return;
   }
+  if (!canAccessCase(req.user!, req.company || null, history[index])) {
+    res.status(403).json({ error: "You do not have permission to modify this case." });
+    return;
+  }
+  if (result) history[index].result = result;
+  if (status) history[index].status = status;
+  writeHistory(history);
+  res.json({ success: true, case: history[index] });
 });
 
 // ── URL Knowledge Summarization ─────────────────────────────────────────
 // Fetches a URL, uses Gemini to summarize it, and saves as AI knowledge in the reference folder.
-app.post("/api/sync/summarize-url", express.json({ limit: '5mb' }), async (req, res) => {
+app.post("/api/sync/summarize-url", requireAdmin, express.json({ limit: '5mb' }), async (req, res) => {
   let { url, folderPath } = req.body;
 
   if (!url || typeof url !== 'string' || !folderPath || typeof folderPath !== 'string') {
@@ -3033,7 +4765,7 @@ ${summaryText}
 });
 
 // POST /analyze-case & POST /api/analyze-case (Both mapped for compatibility)
-const analyzeHandler = async (req: express.Request, res: express.Response) => {
+const analyzeHandler = async (req: AuthedRequest, res: express.Response) => {
   try {
     // request logging removed (use persistent logging/monitoring in production)
     // Handle both legacy single-field and new multi-field uploads
@@ -3262,7 +4994,7 @@ const analyzeHandler = async (req: express.Request, res: express.Response) => {
       return;
     }
 
-    // Create a new case in pending state
+    // Create a new case in pending state (stamped with owner + company for data isolation)
     const newCaseId = `CASE_${Date.now()}`;
     const newCase = {
       id: newCaseId,
@@ -3270,6 +5002,8 @@ const analyzeHandler = async (req: express.Request, res: express.Response) => {
       prescriptionText,
       files: uploadedFilesMetadata,
       status: "pending" as const,
+      ownerUserId: req.user?.id || null,
+      companyId: req.user?.companyId || null,
     };
 
     // Save initial case with pending status
@@ -3540,7 +5274,7 @@ Uploaded Local Files & Metadata: ${JSON.stringify(localFiles, null, 2)}
   }
 };
 
-app.post("/api/export-print-sql", express.json({ limit: '2mb' }), (req, res) => {
+app.post("/api/export-print-sql", requireAuth, express.json({ limit: '2mb' }), (req: AuthedRequest, res) => {
   const { caseId } = req.body;
   if (!caseId || typeof caseId !== "string") {
     return res.status(400).json({ error: "caseId is required" });
@@ -3550,6 +5284,9 @@ app.post("/api/export-print-sql", express.json({ limit: '2mb' }), (req, res) => 
   const caseData = history.find((item) => item.id === caseId);
   if (!caseData) {
     return res.status(404).json({ error: "Case not found" });
+  }
+  if (!canAccessCase(req.user!, req.company || null, caseData)) {
+    return res.status(403).json({ error: "You do not have permission to export this case." });
   }
 
   const sqlText = generatePrintReadySql(caseData);
@@ -3574,11 +5311,11 @@ const analyzeUpload = upload.fields([
   { name: 'prescriptionFiles', maxCount: 500 },
 ]);
 
-app.post("/analyze-case", analyzeUpload, analyzeHandler);
-app.post("/api/analyze-case", analyzeUpload, analyzeHandler);
+app.post("/analyze-case", requireAuth, requirePack("analysis"), analyzeUpload, analyzeHandler);
+app.post("/api/analyze-case", requireAuth, requirePack("analysis"), analyzeUpload, analyzeHandler);
 
 // ── Knowledge Processing: Extract & Summarize Resources from Text+Links ──
-app.post("/api/knowledge/process-text", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/knowledge/process-text", requireAdmin, express.json({ limit: '10mb' }), async (req, res) => {
   const { text, folderPath } = req.body;
   if (!text || !text.trim()) {
     res.status(400).json({ error: 'Text content is required.' });
@@ -3791,7 +5528,7 @@ ${summaryText}
 });
 
 // ── Auto-Learning: Autonomous Online Research ────────────────────────────
-app.post("/api/knowledge/auto-learn", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/knowledge/auto-learn", requireAdmin, express.json({ limit: '10mb' }), async (req, res) => {
   const { context, folderPath, coreMemoryContext } = req.body;
   const ai = getGeminiClient();
   if (!ai) {
@@ -4496,7 +6233,7 @@ function scanForMaliciousContent(buf: Buffer, filename: string): { threats: stri
 }
 
 // Antivirus: scan a file for malware using real file analysis
-app.post("/api/security/scan", express.json({ limit: '50mb' }), async (req, res) => {
+app.post("/api/security/scan", requireAdmin, express.json({ limit: '50mb' }), async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ success: false, error: 'filePath required' });
 
@@ -4586,7 +6323,7 @@ app.post("/api/security/scan", express.json({ limit: '50mb' }), async (req, res)
 });
 
 // ── Antivirus: Delete infected file ───────────────────────────────────
-app.post("/api/security/delete-infected", express.json(), async (req, res) => {
+app.post("/api/security/delete-infected", requireAdmin, express.json(), async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ success: false, error: 'filePath required' });
   let resolved = filePath;
@@ -4918,7 +6655,7 @@ function scanSourceCodeFiles(workspaceRoot: string): { issues: any[]; fixes: str
 }
 
 // Antibug: scan source code for bugs and auto-fix them
-app.post("/api/security/antibug", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/security/antibug", requireAdmin, express.json({ limit: '10mb' }), async (req, res) => {
   const { workspaceRoot } = req.body;
   const root = workspaceRoot
     ? (workspaceRoot.startsWith('file://') ? workspaceRoot.replace('file://', '') : workspaceRoot)
@@ -5000,7 +6737,7 @@ app.post("/api/security/antibug", express.json({ limit: '10mb' }), async (req, r
 });
 
 // ── Antibug: Apply a specific fix for a single issue ──────────────────
-app.post("/api/security/antibug/apply-fix", express.json(), async (req, res) => {
+app.post("/api/security/antibug/apply-fix", requireAdmin, express.json(), async (req, res) => {
   const { file, line, code, message } = req.body;
   if (!file || !line) return res.status(400).json({ success: false, error: 'file and line required' });
 
@@ -5054,7 +6791,7 @@ async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     // In dev mode, mount Vite dev server as middleware on the same port
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, host: "0.0.0.0", allowedHosts: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -5077,11 +6814,31 @@ async function startServer() {
   // Find an available port before binding
   PORT = await findAvailablePort(PORT);
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`AI Retainer Design Studio (Aligner Productions) Server running on http://localhost:${PORT}`);
-    console.log(`  → Main System   : http://localhost:${PORT}/`);
-    console.log(`  → Agliner Seg.  : http://localhost:${PORT}/agliner`);
-    console.log(`  → Ortho Staging : http://localhost:${PORT}/ortho`);
+  const tlsCertPath = process.env.TLS_CERT_PATH;
+  const tlsKeyPath = process.env.TLS_KEY_PATH;
+  const usingTls = !!(tlsCertPath && tlsKeyPath);
+  if (usingTls && (!fs.existsSync(tlsCertPath!) || !fs.existsSync(tlsKeyPath!))) {
+    throw new Error("TLS_CERT_PATH or TLS_KEY_PATH does not point to a readable certificate file.");
+  }
+  const lan = getLanAddresses();
+  const server = usingTls
+    ? https.createServer({ cert: fs.readFileSync(tlsCertPath!), key: fs.readFileSync(tlsKeyPath!) }, app).listen(PORT, "0.0.0.0", () => {
+      console.log(`Whitesmile Clear Orthodontic Design Studio running securely on https://${process.env.PUBLIC_HTTPS_HOST || "localhost"}:${PORT}`);
+    })
+    : app.listen(PORT, "0.0.0.0", () => {
+    console.log(`\n================================================================`);
+    console.log(`  Whitesmile Clear Orthodontic Design Studio Server Running`);
+    console.log(`================================================================`);
+    console.log(`  Local Access   : http://localhost:${PORT}/`);
+    for (const url of lan.urls) {
+      if (!url.includes("localhost")) {
+        console.log(`  Network Access : ${url}/  (use this on 3rd party devices on LAN)`);
+      }
+    }
+    console.log(`  → Main System   : /`);
+    console.log(`  → Agliner Seg.  : /agliner`);
+    console.log(`  → Ortho Staging : /ortho`);
+    console.log(`================================================================\n`);
   });
 
   // WebSocket upgrade proxy for the satellite systems

@@ -1,9 +1,12 @@
 # ── Secrets — NEVER commit these ──────────────────────────────────────
 api-keys.json
+ai-config.json
+ai-providers.json
 .env.local
 .env
 !.env.example
 *.secret
+*.sql
 
 # ── Dependencies ──────────────────────────────────────────────────────
 node_modules/
@@ -64,3 +67,5 @@ desktop.ini
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# ── Multi-user auth data (users, companies, sessions, update log) ── NEVER commit ──
+server-data/

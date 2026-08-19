@@ -3,8 +3,11 @@ import { DentalCase, AnalysisResult } from "./types";
 import RulesCheatsheet from "./components/RulesCheatsheet";
 import AnalysisResultView from "./components/AnalysisResultView";
 import CaseHistory from "./components/CaseHistory";
+import LoginPage from "./components/LoginPage";
+import AdminPanel from "./components/AdminPanel";
 import SystemsHub from "./components/SystemsHub";
 import SystemsStatusCard from "./components/SystemsStatusCard";
+import { useAuth } from "./hooks/useAuth";
 import { AlignerLogo } from "./components/AlignerLogo";
 import { 
   Upload,
@@ -17,18 +20,20 @@ import {
   Database,
   Paperclip,
   Video,
-  History,
   Loader2,
   Cpu,
   Brain,
   Settings,
   BarChart3,
-  BookOpen,
-  UserRound,
   Archive,
   Download,
   Shield,
-  Bug
+  Bug,
+  LogOut,
+  ShieldCheck,
+  UserRound,
+  Terminal,
+  BookOpen
 } from "lucide-react";
 
 import FolderSyncContainer from "./components/FolderSyncContainer";
@@ -36,6 +41,9 @@ import { ContainerState, createEmptyState, saveAnalysisToStorage, saveTempToStor
 import { getApiBase } from "./lib/apiBase";
 
 export default function App() {
+  // ── Auth & multi-tenant session ──
+  const auth = useAuth();
+
   const [prescriptionText, setPrescriptionText] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [prescriptionFiles, setPrescriptionFiles] = useState<File[]>([]);
@@ -47,61 +55,12 @@ export default function App() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPrescriptionDragOver, setIsPrescriptionDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentTab, setCurrentTab] = useState<"workspace" | "cheatsheet" | "logs" | "local" | "storage" | "ai-manager">("workspace");
+  const [currentTab, setCurrentTab] = useState<"workspace" | "cheatsheet" | "local" | "storage" | "ai-manager" | "admin">("workspace");
   const [selectedMaterial, setSelectedMaterial] = useState("PETG 1.0mm Thermoforming Sheet");
 
   // Sidebar collapsible panels — keeps everything visible without scrolling
   const [sidebarAnalysisOpen, setSidebarAnalysisOpen] = useState(true);
   const [sidebarAntivirusOpen, setSidebarAntivirusOpen] = useState(false);
-
-  // ── Shared pipeline configuration (centralized for agliner + ortho) ──
-  const [pipelineConfig, setPipelineConfig] = useState({
-    storageFolder: '',
-    stages: 33,
-    expansion: 1.02,
-    shellMm: 0.75,
-    undercutDeg: 45,
-  });
-  const [pipelineConfigSaving, setPipelineConfigSaving] = useState(false);
-
-  const loadPipelineConfig = useCallback(async () => {
-    try {
-      const res = await fetch('/api/system/config');
-      if (res.ok) {
-        const data = await res.json();
-        setPipelineConfig({
-          storageFolder: data.storageFolder || '',
-          stages: typeof data.stages === 'number' ? data.stages : 33,
-          expansion: typeof data.expansion === 'number' ? data.expansion : 1.02,
-          shellMm: typeof data.shellMm === 'number' ? data.shellMm : 0.75,
-          undercutDeg: typeof data.undercutDeg === 'number' ? data.undercutDeg : 45,
-        });
-      }
-    } catch { /* keep defaults */ }
-  }, []);
-
-  useEffect(() => { loadPipelineConfig(); }, [loadPipelineConfig]);
-
-  const savePipelineConfig = async () => {
-    setPipelineConfigSaving(true);
-    try {
-      const res = await fetch('/api/system/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(pipelineConfig),
-      });
-      if (res.ok) {
-        showToast('Shared pipeline configuration saved.', 'success');
-        loadPipelineConfig();
-      } else {
-        showToast('Failed to save pipeline configuration.', 'error');
-      }
-    } catch {
-      showToast('Failed to save pipeline configuration.', 'error');
-    } finally {
-      setPipelineConfigSaving(false);
-    }
-  };
 
   // Analysis progress tracking
   const ANALYSIS_STEPS = [
@@ -335,6 +294,160 @@ export default function App() {
     } catch { /* ignore */ }
   };
 
+  // AI Provider Registry — the multi-AI list format:
+  // [ { "name":"DC-Hub AI", "vendor":"customendpoint", "apiKey":"...",
+  //     "apiType":"chat-completions",
+  //     "models":[ { "id":"...", "name":"...", "url":"https://.../chat/completions", ... } ] }, ... ]
+  interface AiModelEntry { id: string; name?: string; url?: string; toolCalling?: boolean; vision?: boolean; maxInputTokens?: number; maxOutputTokens?: number }
+  interface AiProviderEntry { id: string; name: string; vendor: string; apiType?: string; hasApiKey: boolean; models: AiModelEntry[]; active: boolean; priority?: number | null; activeModelId?: string }
+  const [aiProviders, setAiProviders] = useState<AiProviderEntry[]>([]);
+  const [aiProvidersJson, setAiProvidersJson] = useState("");
+  const [aiProvidersError, setAiProvidersError] = useState("");
+  const [registeringProviders, setRegisteringProviders] = useState(false);
+  const [activatingProvider, setActivatingProvider] = useState<string | null>(null);
+  const aiProviderFileInputRef = useRef<HTMLInputElement>(null);
+
+  const fetchAiProviders = async () => {
+    try {
+      const res = await fetch("/api/ai/providers");
+      if (res.ok) {
+        const data = await res.json();
+        setAiProviders(data.providers || []);
+      }
+    } catch { /* ignore */ }
+  };
+
+  // Detect & register the pasted provider list
+  const registerAiProviders = async () => {
+    setRegisteringProviders(true);
+    setAiProvidersError("");
+    try {
+      const trimmed = aiProvidersJson.trim();
+      if (!trimmed) {
+        setAiProvidersError("Paste a JSON list of AI providers first.");
+        setRegisteringProviders(false);
+        return;
+      }
+      const res = await fetch("/api/ai/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: trimmed }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAiProviders(data.providers || []);
+        showToast(`Detected ${data.activatedCount || 0} AI provider(s) from ${data.format || "the config"} and activated them.`, "success");
+      } else {
+        const err = await res.text().catch(() => "");
+        setAiProvidersError(err || "Failed to register providers.");
+        showToast("Failed to register providers.", "error");
+      }
+    } catch {
+      setAiProvidersError("Invalid JSON — check the syntax and try again.");
+      showToast("Invalid JSON.", "error");
+    } finally {
+      setRegisteringProviders(false);
+    }
+  };
+
+  const importAiProviderFile = async (file?: File) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setAiProvidersError("AI configuration files must be 5 MB or smaller.");
+      return;
+    }
+    try {
+      setAiProvidersJson(await file.text());
+      setAiProvidersError("");
+      showToast(`${file.name} loaded. Click Detect & Activate to apply it.`, "success");
+    } catch {
+      setAiProvidersError("Could not read that configuration file as text.");
+    } finally {
+      if (aiProviderFileInputRef.current) aiProviderFileInputRef.current.value = "";
+    }
+  };
+
+  const activateProvider = async (id: string, modelId?: string) => {
+    setActivatingProvider(id);
+    try {
+      const res = await fetch(`/api/ai/providers/${encodeURIComponent(id)}/activate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(modelId ? { modelId } : {}),
+      });
+      if (res.ok) {
+        await fetchAiProviders();
+        const p = aiProviders.find(x => x.id === id);
+        const activeCount = aiProviders.filter(x => x.active).length;
+        showToast(
+          `Activated ${p ? p.name : id} — ${activeCount === 0 ? "it's now the PRIMARY AI" : `added to the active set (${activeCount + 1} active total).`}`,
+          "success"
+        );
+      } else {
+        const err = await res.text().catch(() => "");
+        setAiProvidersError(err || "Failed to activate.");
+        showToast("Failed to activate provider.", "error");
+      }
+    } catch {
+      showToast("Network error activating provider.", "error");
+    } finally {
+      setActivatingProvider(null);
+    }
+  };
+
+  const deactivateProvider = async (id: string) => {
+    const p = aiProviders.find(x => x.id === id);
+    try {
+      const res = await fetch(`/api/ai/providers/${encodeURIComponent(id)}/deactivate`, { method: "POST" });
+      if (res.ok) {
+        await fetchAiProviders();
+        const remaining = aiProviders.filter(x => x.active && x.id !== id).length;
+        showToast(
+          `Deactivated ${p ? p.name : id} — ${remaining === 0 ? "no registry AIs active (falls back to simple Gemini config)." : `${remaining} AI(s) still active.`}`,
+          "info"
+        );
+      }
+    } catch { /* ignore */ }
+  };
+
+  const setProviderPriority = async (id: string, priority: number) => {
+    try {
+      const res = await fetch(`/api/ai/providers/${encodeURIComponent(id)}/priority`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priority }),
+      });
+      if (res.ok) await fetchAiProviders();
+    } catch { /* ignore */ }
+  };
+
+  const selectProviderModel = async (id: string, modelId: string) => {
+    // Model change on an already-active provider just updates the selection
+    const p = aiProviders.find(x => x.id === id);
+    if (p && p.active) {
+      try {
+        await fetch(`/api/ai/providers/${encodeURIComponent(id)}/activate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modelId }),
+        });
+        await fetchAiProviders();
+      } catch { /* ignore */ }
+    } else {
+      await activateProvider(id, modelId);
+    }
+  };
+
+  const removeProvider = async (id: string) => {
+    try {
+      const res = await fetch(`/api/ai/providers/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (res.ok) {
+        await fetchAiProviders();
+        showToast("Provider removed.", "info");
+      }
+    } catch { /* ignore */ }
+  };
+
   // Core Memory Prompt states
   const [coreMemory, setCoreMemory] = useState<{ chatInstructions: string; analysisInstructions: string }>({
     chatInstructions: "",
@@ -522,6 +635,7 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
   useEffect(() => {
     fetchCoreMemory();
     fetchApiKeys();
+    fetchAiProviders();
   }, []);
 
   // Background polling for Keep in Sync
@@ -678,13 +792,32 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
     return [];
   };
 
-  const handleSelectCase = (c: DentalCase) => {
-    if (c.result) {
-      setActiveResult(c.result);
-      setActiveCaseId(c.id);
-      setPrescriptionText(c.prescriptionText);
-      setCurrentTab("workspace");
+  const handleSelectCase = async (c: DentalCase) => {
+    setActiveCaseId(c.id);
+    setPrescriptionText(c.prescriptionText);
+    setActiveResult(c.result ?? null);
+    setCurrentTab("workspace");
+
+    // Prefill the workspace form with the case's files (scans + attachments)
+    const stlFiles: File[] = [];
+    const attachmentFiles: File[] = [];
+    for (const f of c.files || []) {
+      if (!f.url || f.url.startsWith("file://")) continue; // file:// paths aren't fetchable from the browser
+      try {
+        const res = await fetch(f.url);
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        const file = new File([blob], f.name, {
+          type: f.mimeType || blob.type || "application/octet-stream",
+        });
+        if (f.isAttachment) attachmentFiles.push(file);
+        else stlFiles.push(file);
+      } catch (e) {
+        console.warn(`Failed to load history file ${f.name}:`, e);
+      }
     }
+    setSelectedFiles(stlFiles);
+    setPrescriptionFiles(attachmentFiles);
   };
 
   const handleDeleteCase = async (id: string) => {
@@ -1198,6 +1331,29 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
     return Number.parseFloat((bytes / (k ** idx)).toFixed(2)) + " " + sizes[idx];
   };
 
+  // ── Auth gate ─────────────────────────────────────────────────────────
+  if (auth.loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-3">
+        <div className="w-10 h-10 rounded-full border-4 border-[#46c0bd]/20 border-t-[#46c0bd] animate-spin" />
+        <p className="text-sm text-slate-500 font-medium">Connecting to server...</p>
+      </div>
+    );
+  }
+
+  if (!auth.user) {
+    return (
+      <LoginPage
+        needsSetup={auth.needsSetup}
+        onLogin={auth.login}
+        onSetupAdmin={auth.setupAdmin}
+      />
+    );
+  }
+
+  const isAdmin = auth.user.role === "admin";
+  const analysisEnabled = auth.enabledPacks.includes("analysis");
+
   return (
     <div className="min-h-screen bg-slate-50 print:bg-white font-sans flex flex-col antialiased">
       {/* Floating Toast Notifications */}
@@ -1244,74 +1400,108 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setCurrentTab("workspace")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
                 currentTab === "workspace"
                   ? "bg-white text-[#46c0bd] shadow-xs"
                   : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
               }`}
               id="tab-btn-workspace"
             >
+              <Terminal className="w-3.5 h-3.5" />
               Workspace Terminal
             </button>
             <button
-              onClick={() => setCurrentTab("logs")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-                currentTab === "logs"
-                  ? "bg-white text-[#46c0bd] shadow-xs"
-                  : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
-              }`}
-              id="tab-btn-logs"
-            >
-              <History className="w-3.5 h-3.5" />
-              Lab Case Logs
-            </button>
-            <button
               onClick={() => setCurrentTab("cheatsheet")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
                 currentTab === "cheatsheet"
                   ? "bg-white text-[#46c0bd] shadow-xs"
                   : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
               }`}
               id="tab-btn-cheatsheet"
             >
+              <BookOpen className="w-3.5 h-3.5" />
               Manufacturing Rules Cheatsheet
             </button>
-            <button
-              onClick={() => setCurrentTab("ai-manager")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-                currentTab === "ai-manager"
-                  ? "bg-white text-[#46c0bd] shadow-xs"
-                  : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
-              }`}
-              id="tab-btn-ai-manager"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              AI Manager
-            </button>
-            <button
-              onClick={() => setCurrentTab("local")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-                currentTab === "local"
-                  ? "bg-white text-[#46c0bd] shadow-xs"
-                  : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
-              }`}
-              id="tab-btn-local"
-            >
-              <Database className="w-3.5 h-3.5" />
-              Local Folder Sync
-            </button>
-            <button
-              onClick={() => setCurrentTab("storage")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-                currentTab === "storage"
-                  ? "bg-white text-[#46c0bd] shadow-xs"
-                  : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
-              }`}
-              id="tab-btn-storage"
-            >
-              <Archive className="w-3.5 h-3.5" />
-              Storage
-            </button>
+                        {isAdmin && (
+              <button
+                onClick={() => setCurrentTab("ai-manager")}
+                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  currentTab === "ai-manager"
+                    ? "bg-white text-[#46c0bd] shadow-xs"
+                    : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                }`}
+                id="tab-btn-ai-manager"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                AI Manager
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                onClick={() => setCurrentTab("local")}
+                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  currentTab === "local"
+                    ? "bg-white text-[#46c0bd] shadow-xs"
+                    : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                }`}
+                id="tab-btn-local"
+              >
+                <Database className="w-3.5 h-3.5" />
+                Local Folder Sync
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                onClick={() => setCurrentTab("storage")}
+                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  currentTab === "storage"
+                    ? "bg-white text-[#46c0bd] shadow-xs"
+                    : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                }`}
+                id="tab-btn-storage"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                Storage
+              </button>
+            )}
+
+            {isAdmin && (
+              <button
+                onClick={() => setCurrentTab("admin")}
+                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  currentTab === "admin"
+                    ? "bg-white text-[#46c0bd] shadow-xs"
+                    : "bg-white/10 hover:bg-white/20 text-white border border-white/25"
+                }`}
+                id="tab-btn-admin"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Admin Panel
+              </button>
+            )}
+
+            {/* User badge + logout */}
+            <div className="flex items-center gap-2 pl-2 ml-1 border-l border-white/20">
+              <div className="flex items-center gap-1.5 text-white">
+                <UserRound className="w-3.5 h-3.5 text-white/70" />
+                <div className="leading-tight">
+                  <span className="text-[11px] font-bold block">{auth.user.username}</span>
+                  <span className="text-[9px] text-white/70 block">
+                    {auth.company ? auth.company.name : isAdmin ? "Administrator" : "No company"}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  await auth.logout();
+                  setCurrentTab("workspace");
+                }}
+                className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="Sign out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -1320,11 +1510,13 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 flex flex-col lg:flex-row gap-8 overflow-hidden print:block print:p-0 print:m-0 print:max-w-none">
         
         {/* Left Hand: History Sidebar */}
-        {currentTab !== "logs" && currentTab !== "local" && currentTab !== "storage" && currentTab !== "ai-manager" && (
+        {currentTab !== "local" && currentTab !== "storage" && currentTab !== "ai-manager" && currentTab !== "admin" && (
           <section className="w-full lg:w-80 shrink-0 print:hidden flex flex-col gap-2" id="sidebar-section">
-            <div className="shrink-0">
-              <SystemsStatusCard />
-            </div>
+            {isAdmin && (
+              <div className="shrink-0">
+                <SystemsStatusCard />
+              </div>
+            )}
 
             <div className="shrink-0">
               <CaseHistory
@@ -1573,9 +1765,17 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
 
         {/* Right Hand: Main Panel Workspace */}
         <section className="flex-1 min-w-0 space-y-6 print:space-y-0" id="workspace-main-panel">
+          {currentTab === "admin" && (
+            <AdminPanel
+              packs={auth.packs}
+              connection={auth.connection}
+              onRefreshMe={auth.refresh}
+            />
+          )}
+
           {currentTab === "cheatsheet" && <RulesCheatsheet />}
 
-          {currentTab === "local" && (
+          {currentTab === "local" && isAdmin && (
             <div className="space-y-6">
               {/* Connected Reference Library */}
               <FolderSyncContainer
@@ -1735,7 +1935,7 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             </div>
           )}
 
-          {currentTab === "storage" && (
+          {currentTab === "storage" && isAdmin && (
             <div className="space-y-6">
               <FolderSyncContainer
                 id="storage"
@@ -1779,47 +1979,7 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             </div>
           )}
 
-          {currentTab === "logs" && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-1">
-                <CaseHistory
-                  cases={historyCases}
-                  onSelectCase={handleSelectCase}
-                  onDeleteCase={handleDeleteCase}
-                  activeCaseId={activeCaseId || undefined}
-                />
-              </div>
-              <div className="lg:col-span-2 space-y-4">
-                {activeResult ? (
-                  <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
-                    <div className="flex items-center gap-2 text-slate-800 border-b border-slate-100 pb-3 mb-4">
-                      <CheckCircle className="w-5 h-5 text-emerald-500" />
-                      <h2 className="text-md font-bold">
-                        Manufacturing Specifications for {activeCaseId || "Selected Case"}
-                      </h2>
-                    </div>
-                    <AnalysisResultView 
-                      result={activeResult} 
-                      caseId={activeCaseId || undefined} 
-                      files={historyCases.find((c) => c.id === activeCaseId)?.files}
-                    />
-                  </div>
-                ) : (
-                  <div className="border border-dashed border-slate-200 rounded-xl p-12 text-center bg-white/50 h-64 flex flex-col justify-center items-center">
-                    <div className="w-8 h-8 rounded-full bg-slate-100 mb-3 flex items-center justify-center">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                    </div>
-                    <p className="text-slate-700 text-sm font-semibold">No Case Selected</p>
-                    <p className="text-slate-400 text-xs mt-1 max-w-sm">
-                      Select a case from the logs list on the left to view its complete interpreted specifications, manufacturing guidelines, and quality audit details.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {currentTab === "ai-manager" && (
+          {currentTab === "ai-manager" && isAdmin && (
             <div className="space-y-6">
 
               {/* API Key Management */}
@@ -1930,6 +2090,182 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
                     <p className="text-[10px] text-slate-300 mt-1">AI analysis is unavailable until a valid key is added.</p>
                   </div>
                 )}
+              </div>
+
+              {/* AI Provider Registry — paste the AI list, detect, activate/deactivate */}
+              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-4 mb-4">
+                  <div className="p-2 bg-cyan-50 text-cyan-600 rounded-xl">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                  </div>
+                  <div>
+                    <h3 className="text-md font-bold text-slate-800">AI Providers — Paste, Detect &amp; Activate</h3>
+                    <p className="text-xs text-slate-400 font-medium">Paste the AI list JSON — the system detects every provider &amp; model, then you activate the ones to use. Multiple AIs can be active at once (primary + backups).</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <input
+                    ref={aiProviderFileInputRef}
+                    type="file"
+                    accept=".json,.py,.ts,.tsx,.js,.mjs,.cjs,.env,.txt"
+                    className="hidden"
+                    onChange={(e) => void importAiProviderFile(e.target.files?.[0])}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => aiProviderFileInputRef.current?.click()}
+                    className="px-3 py-1.5 text-xs font-bold text-cyan-700 bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Import AI config file
+                  </button>
+                  <textarea
+                    value={aiProvidersJson}
+                    onChange={(e) => { setAiProvidersJson(e.target.value); setAiProvidersError(""); }}
+                    spellCheck={false}
+                    className="w-full h-44 p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-700 focus:bg-white focus:outline-none focus:ring-1 focus:ring-cyan-500 leading-relaxed resize-y"
+                    placeholder={`Paste the AI list JSON, e.g.:\n\n[\n  {\n    "name": "DC-Hub AI",\n    "vendor": "customendpoint",\n    "apiKey": "...",\n    "apiType": "chat-completions",\n    "models": [\n      { "id": "Qwen3.6-35B...", "name": "Qwen3.6 35B", "url": "https://.../v1/chat/completions" }\n    ]\n  },\n  {\n    "name": "OmniRoute AI",\n    "vendor": "customendpoint",\n    "apiKey": "sk-...",\n    "apiType": "chat-completions",\n    "models": [ ... ]\n  }\n]`}
+                  />
+                  {aiProvidersError && (
+                    <p className="text-[11px] font-semibold text-rose-600">{aiProvidersError}</p>
+                  )}
+                  <div className="flex items-center justify-between pt-1">
+                    <p className="text-[10px] text-slate-400">
+                      Each entry needs <code className="font-mono">name</code>, <code className="font-mono">apiKey</code> and <code className="font-mono">models[]</code> with <code className="font-mono">id</code> + <code className="font-mono">url</code> (OpenAI-compatible endpoints).
+                      Activate several AIs at once — calls try them in priority order (★ primary first, then backups) until one responds.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={registeringProviders || !aiProvidersJson.trim()}
+                      onClick={registerAiProviders}
+                      className="px-5 py-2 text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-700 rounded-lg transition-all shadow-sm hover:shadow-md disabled:bg-slate-300 disabled:shadow-none cursor-pointer flex items-center gap-1.5 shrink-0"
+                    >
+                      {registeringProviders ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Detecting…</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Detect &amp; Activate</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Registered providers list */}
+                <div className="mt-5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                      Registered AIs ({aiProviders.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={fetchAiProviders}
+                      className="text-[10px] font-bold text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                    >
+                      ↻ Refresh
+                    </button>
+                  </div>
+                  {aiProviders.length === 0 && (
+                    <div className="p-4 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-center">
+                      <p className="text-xs text-slate-400">No AIs registered yet. Paste the list above and click "Detect &amp; Register".</p>
+                    </div>
+                  )}
+                  {aiProviders.map((p) => {
+                    const activeCount = aiProviders.filter(x => x.active).length;
+                    const prio = p.priority ?? 0;
+                    return (
+                    <div
+                      key={p.id}
+                      className={`flex flex-col gap-2 p-3 rounded-xl border text-xs ${p.active ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-2 h-2 rounded-full shrink-0 ${p.active ? "bg-emerald-500" : "bg-slate-300"}`} />
+                          <span className="font-bold text-slate-700 truncate">{p.name}</span>
+                          <span className="text-[10px] text-slate-400 uppercase shrink-0">{p.vendor}</span>
+                          {p.active && (
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${prio === 0 ? "bg-emerald-600 text-white" : "bg-emerald-100 text-emerald-700"}`}>
+                              {prio === 0 ? "★ PRIMARY" : activeCount > 1 ? `BACKUP ${prio}` : "ACTIVE"}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {p.active && activeCount > 1 && (
+                            <>
+                              <button
+                                onClick={() => setProviderPriority(p.id, Math.max(0, prio - 1))}
+                                disabled={prio === 0}
+                                className="text-[10px] font-bold text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 px-2 py-1 rounded transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                title="Move up in priority"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                onClick={() => setProviderPriority(p.id, prio + 1)}
+                                disabled={prio >= activeCount - 1}
+                                className="text-[10px] font-bold text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 px-2 py-1 rounded transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                title="Move down in priority"
+                              >
+                                ↓
+                              </button>
+                            </>
+                          )}
+                          {p.active ? (
+                            <button
+                              onClick={() => deactivateProvider(p.id)}
+                              className="text-[10px] font-bold text-rose-500 hover:text-rose-700 bg-white hover:bg-rose-50 border border-rose-200 px-2.5 py-1 rounded transition-all cursor-pointer"
+                            >
+                              Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              disabled={activatingProvider === p.id || !p.hasApiKey || p.models.length === 0}
+                              onClick={() => activateProvider(p.id)}
+                              className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 bg-white hover:bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded transition-all disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 disabled:cursor-not-allowed cursor-pointer"
+                              title={!p.hasApiKey ? "No apiKey in config" : !p.models.length ? "No models in config" : "Add this AI to the active set"}
+                            >
+                              {activatingProvider === p.id ? "Activating…" : "Activate"}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => removeProvider(p.id)}
+                            className="text-[10px] font-bold text-slate-400 hover:text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 px-2 py-1 rounded transition-all cursor-pointer"
+                            title="Remove from registry"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                      {/* Model selector (only for providers with multiple models) */}
+                      {p.models.length > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap pl-4">
+                          <span className="text-[9px] uppercase font-bold text-slate-400">Model:</span>
+                          <select
+                            value={p.activeModelId || p.models[0]?.id || ""}
+                            onChange={(e) => selectProviderModel(p.id, e.target.value)}
+                            className="text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 font-mono focus:outline-none focus:ring-1 focus:ring-cyan-500 max-w-[320px]"
+                          >
+                            {p.models.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.name || m.id}{m.vision ? " 👁" : ""}{m.toolCalling ? " 🔧" : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {p.active && (
+                            <span className="text-[10px] text-slate-400">
+                              {p.models.length} model{p.models.length !== 1 ? "s" : ""} · {p.models[0]?.maxInputTokens ? `${Math.round(p.models[0].maxInputTokens / 1000)}K ctx` : ""}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* AI Engine Status Card */}
@@ -2405,6 +2741,8 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
 
           {currentTab === "workspace" && (
             <div className="space-y-6 print:space-y-0">
+              {analysisEnabled ? (
+                <>
 
               {/* Import to Workstation — from Patient Case Scanner */}
               {patientSyncState.files.filter(f => f.selected && !f.isDirectory).length > 0 && (
@@ -2899,97 +3237,6 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
                 </div>
               )}
 
-              {/* ── Shared Pipeline Configuration (centralized setup) ────────── */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden" id="pipeline-config-card">
-                <div className="flex items-center justify-between flex-wrap gap-2 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
-                  <div className="flex items-center gap-2">
-                    <Settings className="w-4 h-4 text-[#46c0bd]" />
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-800">Shared Pipeline Configuration</h2>
-                      <p className="text-[10px] text-slate-500 mt-0.5">Centralized setup consumed by Agliner Segmentation &amp; Ortho Staging/Render</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="p-5 space-y-4">
-                  {/* Storage */}
-                  <div>
-                    <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Shared Storage Folder</label>
-                    <input
-                      type="text"
-                      value={pipelineConfig.storageFolder}
-                      onChange={(e) => setPipelineConfig(p => ({ ...p, storageFolder: e.target.value }))}
-                      placeholder="e.g. C:\Whitesmile\storage"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-700 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#46c0bd]/50"
-                    />
-                    <p className="text-[10px] text-slate-400 mt-1">Segmented STLs from Agliner are copied here for Ortho to render.</p>
-                  </div>
-
-                  {/* Parameters */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div>
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Stages</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={99}
-                        value={pipelineConfig.stages}
-                        onChange={(e) => setPipelineConfig(p => ({ ...p, stages: Number(e.target.value) }))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Expansion</label>
-                      <input
-                        type="number"
-                        step={0.01}
-                        min={0.9}
-                        max={1.2}
-                        value={pipelineConfig.expansion}
-                        onChange={(e) => setPipelineConfig(p => ({ ...p, expansion: Number(e.target.value) }))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Shell (mm)</label>
-                      <input
-                        type="number"
-                        step={0.05}
-                        min={0}
-                        max={2}
-                        value={pipelineConfig.shellMm}
-                        onChange={(e) => setPipelineConfig(p => ({ ...p, shellMm: Number(e.target.value) }))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Undercut (°)</label>
-                      <input
-                        type="number"
-                        min={0}
-                        max={90}
-                        value={pipelineConfig.undercutDeg}
-                        onChange={(e) => setPipelineConfig(p => ({ ...p, undercutDeg: Number(e.target.value) }))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
-                    <button
-                      onClick={savePipelineConfig}
-                      disabled={pipelineConfigSaving}
-                      className="px-4 py-2 text-xs font-bold text-white bg-[#46c0bd] hover:bg-[#3ba6a3] rounded-lg transition-colors disabled:bg-slate-300 cursor-pointer"
-                    >
-                      {pipelineConfigSaving ? 'Saving...' : 'Save Configuration'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-6">
-                <SystemsHub />
-              </div>
-
               {/* Imported files clear button (visible when any imported files present) */}
               {importLog.length > 0 && (
                 <div className="flex justify-end print:hidden">
@@ -3003,6 +3250,24 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
                 </div>
               )}
 
+                </>
+              ) : null}
+
+              {/* ── Satellite Systems (gated by feature packs) ── */}
+              <SystemsHub enabledPacks={auth.enabledPacks} />
+
+              {/* No packs enabled at all */}
+              {auth.enabledPacks.length === 0 && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-12 text-center">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 mx-auto mb-3 flex items-center justify-center">
+                    <ShieldCheck className="w-6 h-6 text-slate-300" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-700">No Feature Packs Enabled</p>
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                    Your company does not have any feature packs activated. Contact your administrator to enable them.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </section>

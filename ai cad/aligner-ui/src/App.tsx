@@ -2,7 +2,7 @@ import React, { useEffect } from 'react'
 import Sidebar from './components/Sidebar'
 import type { SharedPipelineConfig } from './types/pipeline'
 
-const DEFAULT_MAIN_SERVER = 'http://localhost:3000'
+const DEFAULT_MAIN_SERVER = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
 
 export default function App() {
   const [mainServerUrl] = React.useState(

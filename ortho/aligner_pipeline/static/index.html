@@ -179,6 +179,8 @@
       <button class="btn-small" onclick="toggleEditMode()" id="editModeBtn">&#x270E; Edit</button>
       <button class="btn-small" onclick="openViewerWindow()" id="openViewerBtn">&#x26F6; Open Viewer</button>
       <button class="btn-small primary" onclick="toggleViewerFullscreen()" id="fullscreenBtn">&#x26F6; Full Screen</button>
+      <button class="btn-small" onclick="finalizeCase()" id="finalizeBtn" title="Save this case permanently so it can be reopened later">&#x1F4BE; Finalize</button>
+      <button class="btn-small danger" onclick="discardCase()" id="discardBtn" title="Delete this case's STLs and plan">&#x1F5D1; Discard</button>
     </div>
   </div>
   <div class="viewer-timeline">
@@ -301,15 +303,15 @@ controls.dampingFactor = 0.1;
 controls.minDistance = 10;
 controls.maxDistance = 300;
 
-const ambient = new THREE.AmbientLight(0x404060, 0.6);
+const ambient = new THREE.AmbientLight(0x7a7066, 0.7);
 scene.add(ambient);
-const hemi = new THREE.HemisphereLight(0x8888ff, 0x444422, 0.8);
+const hemi = new THREE.HemisphereLight(0xfff4e6, 0x8a6f52, 0.9);
 scene.add(hemi);
-const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
+const dirLight = new THREE.DirectionalLight(0xfff2e0, 2.5);
 dirLight.position.set(50, 80, 30);
 dirLight.castShadow = true;
 scene.add(dirLight);
-const fillLight = new THREE.DirectionalLight(0x4488ff, 0.5);
+const fillLight = new THREE.DirectionalLight(0xffcc99, 0.6);
 fillLight.position.set(-30, 20, -40);
 scene.add(fillLight);
 const gridHelper = new THREE.GridHelper(100, 20, 0x444466, 0x333355);
@@ -319,7 +321,8 @@ const stageGroup = new THREE.Group();
 scene.add(stageGroup);
 
 const TOOTH_COLORS = [0xe8d5b7, 0xd4c4a8, 0xf0e0c0, 0xddd0b5, 0xe5d0b0, 0xccbbaa, 0xf5e8d0, 0xddccbb];
-const ALIGNER_COLOR = 0x88ccff;
+const ALIGNER_COLOR = 0xe6d5bb;   // beige aligner shell
+const GINGIVA_COLOR = 0xe2938d;   // gum pink — clearly visible against beige teeth
 function toothColor(tn) { return TOOTH_COLORS[Math.abs(tn) % TOOTH_COLORS.length]; }
 
 function resize() {
@@ -439,17 +442,27 @@ window.__viewerLoadStage = async function (stageIndex, planName, quiet) {
     if (hint) hint.style.display = 'none';
 
     let loaded = 0;
+    let skipped = 0;
     for (const file of data.files) {
       if (!file.path) continue;
       try {
         const geom = await loadSTL(file.path);
+        const triCount = geom.index ? geom.index.count / 3 : geom.attributes.position.count / 3;
+        // Skip degenerate meshes (empty/corrupt tooth STLs render as stray
+        // floating specks). Gingiva + aligner are always kept.
+        const isGingiva = file.name === 'gingiva.stl';
         const isAligner = file.name === 'aligner.stl';
+        if (!isGingiva && !isAligner && triCount < 20) {
+          geom.dispose();
+          skipped++;
+          continue;
+        }
         const mat = new THREE.MeshPhysicalMaterial({
-          color: isAligner ? ALIGNER_COLOR : toothColor(parseInt(file.name.replace(/\D/g, '')) || 0),
+          color: isAligner ? ALIGNER_COLOR : (isGingiva ? GINGIVA_COLOR : toothColor(parseInt(file.name.replace(/\D/g, '')) || 0)),
           metalness: isAligner ? 0.0 : 0.05,
-          roughness: isAligner ? 0.3 : 0.6,
+          roughness: isAligner ? 0.4 : (isGingiva ? 0.85 : 0.6),
           transparent: isAligner,
-          opacity: isAligner ? 0.6 : 1.0,
+          opacity: isAligner ? 0.55 : 1.0,
           side: isAligner ? THREE.DoubleSide : THREE.FrontSide,
         });
         const mesh = new THREE.Mesh(geom, mat);
@@ -468,7 +481,7 @@ window.__viewerLoadStage = async function (stageIndex, planName, quiet) {
       overlay.className = 'viewport-overlay';
       viewportEl.appendChild(overlay);
     }
-    overlay.textContent = 'Stage ' + stageIndex + ' - ' + loaded + ' objects';
+    overlay.textContent = 'Stage ' + stageIndex + ' - ' + loaded + ' objects' + (skipped ? ' (' + skipped + ' empty teeth skipped)' : '');
 
     applyJawFilter();
     frameCamera();
@@ -792,7 +805,7 @@ if (window.__editorSyncFn) {
       latestCase = cases.length ? cases[0] : null;
       const caseEl = document.getElementById('autoCase');
       if (latestCase) {
-        caseEl.textContent = latestCase.case_name;
+        caseEl.textContent = latestCase.case_name + (latestCase.finalized ? ' (finalized)' : '');
         caseEl.className = 'val ready';
         document.getElementById('autoTeeth').textContent = String(latestCase.tooth_count) + (latestCase.has_gingiva ? ' + gingiva' : '');
         setFlowState('flow2', 'done');
@@ -802,6 +815,7 @@ if (window.__editorSyncFn) {
         document.getElementById('autoTeeth').textContent = '—';
         setFlowState('flow2', '');
       }
+      updateCaseButtons();
     } catch (e) {
       latestCase = null;
     }
@@ -830,7 +844,9 @@ if (window.__editorSyncFn) {
 
   // ── Domino: auto-run the pipeline once a segmented case + treatment plan
   // are both available (B → C). Runs once per case + prescription.
-  async function maybeAutoRun() {    if (viewerOnly) return; // viewer windows never trigger the pipeline    if (running || !latestCase || !rx) return;
+  async function maybeAutoRun() {
+    if (viewerOnly) return; // viewer windows never trigger the pipeline
+    if (running || !latestCase || !rx) return;
     const autoKey = latestCase.case_name + '::' + (rx ? rx.slice(0, 60) : '');
     if (autoRanKey === autoKey) return;
     // Don't collide with another client already rendering on the server
@@ -839,6 +855,23 @@ if (window.__editorSyncFn) {
       if (st.pipeline_running) return;
     } catch (e) {
       return;
+    }
+    // Skip if this case already has a rendered plan — never re-create it on
+    // every poll (that's what kept resurrecting the previous patient's design).
+    try {
+      const existing = await api('/api/plans/' + encodeURIComponent(latestCase.case_name));
+      const outDir = existing.plan && existing.plan.output_dir;
+      if (outDir) {
+        const stage0 = outDir.replace(/\\/g, '/') + '/stage_000';
+        const probe = await fetch(ORTHO_BASE + '/api/plans/' + encodeURIComponent(latestCase.case_name) + '/stages/0/stls');
+        if (probe.ok) {
+          autoRanKey = autoKey;
+          log('Plan already exists for ' + latestCase.case_name + ' — skipping auto-run.', 'ok');
+          return;
+        }
+      }
+    } catch (e) {
+      // no plan yet — fall through and create it
     }
     autoRanKey = autoKey;
     log('Inputs ready — auto-running pipeline (' + latestCase.case_name + ')', 'ok');
@@ -937,9 +970,11 @@ if (window.__editorSyncFn) {
     try {
       const data = await api('/api/plans/' + encodeURIComponent(name));
       const p = data.plan;
-      // Skip the full rebuild when nothing changed (stops the flicker/refresh)
+      // Skip the full rebuild when nothing changed (stops the flicker/refresh) —
+      // but keep retrying until the viewer has actually loaded its stage, in
+      // case the Three.js module wasn't ready on the first pass.
       const key = name + '|' + (p.tooth_numbers || []).length + '|' + (p.num_stages || 0) + '|' + JSON.stringify(p.movements || {});
-      if (planName === name && lastPlanKey === key) return;
+      if (planName === name && lastPlanKey === key && viewerLoadedKey === name + '|0') return;
       lastPlanKey = key;
       plan = p;
       planName = name;
@@ -956,11 +991,14 @@ if (window.__editorSyncFn) {
       planName + ' · ' + (plan.tooth_numbers ? plan.tooth_numbers.length : 0) + ' teeth · ' + (plan.num_stages || 0) + ' stages';
     buildToothGrid();
     showViewer();
+    updateCaseButtons();
   }
 
   // ---- Design Viewer - show once a plan exists, load stage 0 (once per plan) ----
   function showViewer() {
-    if (setupOnly) return; // the viewer lives in its own separate card
+    // The setup page keeps its own card layout — the full 3D design viewer
+    // lives in the dedicated Design Viewer card below (?viewer=1).
+    if (setupOnly) return;
     const vc = document.getElementById('viewerCard');
     if (!vc) return;
     vc.style.display = '';
@@ -971,8 +1009,12 @@ if (window.__editorSyncFn) {
     if (viewerLoadedKey !== want) {
       timeline.value = 0;
       document.getElementById('stageLabel').textContent = '0';
-      if (window.__viewerLoadStage) window.__viewerLoadStage(0, planName, false);
-      viewerLoadedKey = want;
+      // Only mark as loaded once the Three.js module is actually ready —
+      // otherwise the poll guard below would skip retrying forever.
+      if (window.__viewerLoadStage) {
+        window.__viewerLoadStage(0, planName, false);
+        viewerLoadedKey = want;
+      }
     }
   }
 
@@ -984,6 +1026,61 @@ if (window.__editorSyncFn) {
   function hideEditCard() {
     document.getElementById('editCard').style.display = 'none';
     hideViewer();
+  }
+
+  // ---- Case lifecycle: finalize (save for reopening) / discard (delete) ----
+  function updateCaseButtons() {
+    const fin = document.getElementById('finalizeBtn');
+    const disc = document.getElementById('discardBtn');
+    if (!fin || !disc) return;
+    const finalized = !!(latestCase && latestCase.finalized);
+    fin.textContent = finalized ? '\u2713 Finalized' : '\uD83D\uDCBE Finalize';
+    fin.classList.toggle('primary', !finalized);
+    fin.disabled = finalized;
+    disc.disabled = running;
+  }
+
+  window.finalizeCase = async function () {
+    if (!planName) return;
+    try {
+      await api('/api/cases/' + encodeURIComponent(planName) + '/finalize', { method: 'POST' });
+      if (latestCase) latestCase.finalized = true;
+      updateCaseButtons();
+      log('Case finalized — it will be kept and can be reopened later.', 'ok');
+    } catch (e) {
+      log('Error finalizing case: ' + e.message, 'err');
+    }
+  };
+
+  window.discardCase = async function () {
+    if (!planName) return;
+    if (!confirm('Discard case "' + planName + '"?\n\nThis deletes its segmented STLs, rendered stages and plan. This cannot be undone.')) return;
+    try {
+      await api('/api/cases/' + encodeURIComponent(planName) + '/discard', { method: 'POST' });
+      log('Case discarded: ' + planName, 'ok');
+      planName = '';
+      plan = null;
+      latestCase = null;
+      viewerLoadedKey = '';
+      lastPlanKey = '';
+      hideEditCard();
+      refreshAuto();
+    } catch (e) {
+      log('Error discarding case: ' + e.message, 'err');
+    }
+  };
+
+  // Keep the Finalize/Discard buttons in sync with the latest case state
+  async function refreshCaseButtons() {
+    try {
+      const data = await api('/api/storage');
+      const cases = data.cases || [];
+      const cur = cases.find(function (c) { return c.case_name === planName; });
+      if (cur) {
+        latestCase = cur;
+        updateCaseButtons();
+      }
+    } catch (e) { /* keep last state */ }
   }
 
   function buildToothGrid() {
@@ -1359,6 +1456,7 @@ if (window.__editorSyncFn) {
   loadMainSettings();
   refreshAuto();
   setInterval(refreshAuto, viewerOnly ? 8000 : 10000);
+  setInterval(refreshCaseButtons, 8000);
   if (!viewerOnly) log('Auto pipeline ready. Waiting for inputs…');
 </script>
 </body>

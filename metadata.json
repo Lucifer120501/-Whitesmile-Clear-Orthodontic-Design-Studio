@@ -1,5 +1,5 @@
 {
-  "name": "Whitesmile Clear AI Design Assistant",
+  "name": "Whitesmile Clear Orthodontic Design Studio",
   "description": "An AI-powered design and manufacturing instruction assistant for dental retainers.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
