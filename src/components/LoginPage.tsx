@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { AlignerLogo } from "./AlignerLogo";
-import { Loader2, Lock, User, Server, ShieldCheck, AlertCircle, Eye, EyeOff } from "lucide-react";
-import { getServerAddress, setServerAddress } from "../lib/auth";
+import { Loader2, Lock, User, AlertCircle, Eye, EyeOff } from "lucide-react";
 
 interface LoginPageProps {
   needsSetup: boolean;
@@ -10,18 +9,12 @@ interface LoginPageProps {
 }
 
 export default function LoginPage({ needsSetup, onLogin, onSetupAdmin }: LoginPageProps) {
-  const [serverAddress, setServerAddressState] = useState(getServerAddress());
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const handleServerAddressChange = (value: string) => {
-    setServerAddressState(value);
-    setServerAddress(value);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,26 +70,6 @@ export default function LoginPage({ needsSetup, onLogin, onSetupAdmin }: LoginPa
           </div>
 
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
-            {/* Server address */}
-            <div>
-              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
-                Server Address <span className="normal-case font-medium">(optional — leave blank for this server)</span>
-              </label>
-              <div className="relative">
-                <Server className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={serverAddress}
-                  onChange={(e) => handleServerAddressChange(e.target.value)}
-                  placeholder="http://192.168.1.50:3000"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-xs font-mono text-slate-700 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#46c0bd]/50"
-                />
-              </div>
-              <p className="text-[10px] text-slate-400 mt-1">
-                Your administrator provides this address. Leave blank if you opened this page from the server itself.
-              </p>
-            </div>
-
             {/* Username */}
             <div>
               <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Username</label>
