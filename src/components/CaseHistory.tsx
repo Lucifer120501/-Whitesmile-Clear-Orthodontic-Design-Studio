@@ -1,5 +1,5 @@
 import { DentalCase } from "../types";
-import { History, FileCode, Trash2, Calendar, HardDrive, CheckCircle2 } from "lucide-react";
+import { History, FileCode, Trash2, Calendar, HardDrive, CheckCircle2, User, Building2 } from "lucide-react";
 
 interface CaseHistoryProps {
   cases: DentalCase[];
@@ -84,6 +84,24 @@ export default function CaseHistory({ cases, onSelectCase, onDeleteCase, activeC
                     </button>
                   </div>
                 </div>
+
+                {/* User & Company Badges (Visible for Admin & Multi-User) */}
+                {(c.ownerUsername || c.companyName) && (
+                  <div className="flex flex-wrap items-center gap-1.5 mb-2 text-[10px]">
+                    {c.ownerUsername && (
+                      <span className="flex items-center gap-1 bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-medium border border-slate-200/60" title={`User: ${c.ownerUsername}`}>
+                        <User className="w-2.5 h-2.5 text-slate-500" />
+                        {c.ownerUsername}
+                      </span>
+                    )}
+                    {c.companyName && (
+                      <span className="flex items-center gap-1 bg-teal-50 text-teal-800 px-1.5 py-0.5 rounded font-medium border border-teal-200/60" title={`Company: ${c.companyName}`}>
+                        <Building2 className="w-2.5 h-2.5 text-teal-600" />
+                        {c.companyName}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* Prescription preview */}
                 <p className="text-slate-600 text-xs line-clamp-2 leading-relaxed mb-3 pr-2">

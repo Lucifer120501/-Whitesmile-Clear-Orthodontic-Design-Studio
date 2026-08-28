@@ -30,5 +30,9 @@ export interface DentalCase {
   prescriptionText: string;
   files: UploadedFile[];
   status: "pending" | "processed" | "failed" | "confirmed";
+  ownerUserId?: string;
+  ownerUsername?: string;
+  companyId?: string;
+  companyName?: string;
   result?: AnalysisResult;
 }

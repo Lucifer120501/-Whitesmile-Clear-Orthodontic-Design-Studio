@@ -1492,15 +1492,44 @@ function canAccessCase(user: UserRecord, company: CompanyRecord | null, caseReco
 function getTenantStoragePath(user: UserRecord): string {
   const config = loadSystemConfig();
   const base = path.resolve(config.storageFolder);
-  if (user.role === "admin" || !user.companyId) return base;
+  if (user.role === "admin") return base;
+  if (!user.companyId) {
+    return path.join(base, "_unassigned", sanitizeFolderName(user.username));
+  }
   const company = readCompanies().find((c) => c.id === user.companyId);
-  if (!company) throw new Error("Your company no longer exists.");
+  if (!company) {
+    return path.join(base, "_unassigned", sanitizeFolderName(user.username));
+  }
+  if (company.syncEnabled) {
+    return path.join(base, sanitizeFolderName(company.name));
+  }
   return path.join(base, sanitizeFolderName(company.name), sanitizeFolderName(user.username));
 }
 
 function isPathInside(candidate: string, parent: string): boolean {
   const relative = path.relative(parent, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/** Resolves and validates a user's folder path against their tenant storage boundaries. */
+function resolveTenantFolderPath(user: UserRecord, folderPath?: string): string {
+  const tenantBase = getTenantStoragePath(user);
+  if (!fs.existsSync(tenantBase)) {
+    try {
+      fs.mkdirSync(tenantBase, { recursive: true });
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!folderPath || !folderPath.trim()) {
+    return tenantBase;
+  }
+  const clean = folderPath.trim();
+  const resolved = path.isAbsolute(clean) ? path.resolve(clean) : path.resolve(tenantBase, clean);
+  if (user.role !== "admin" && !isPathInside(resolved, tenantBase)) {
+    throw new Error("Access denied: path is outside your company storage boundary.");
+  }
+  return resolved;
 }
 
 function generatePrintReadySql(caseData: any): string {
@@ -1581,8 +1610,8 @@ const upload = multer({
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
-// Serve uploaded files statically if needed
-app.use("/uploads", express.static(uploadsDir, {
+// Serve uploaded files statically only after authentication
+app.use("/uploads", requireAuth, express.static(uploadsDir, {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.stl')) {
       res.setHeader('Content-Type', 'application/sla');
@@ -2118,13 +2147,9 @@ const activeSyncJobs = new Map<string, SyncJob>();
 app.post("/api/sync/scan", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { folderPath } = req.body;
   const user = (req as any).user;
-  if (!folderPath) {
-    res.status(400).json({ error: 'Folder path is required.' });
-    return;
-  }
 
   try {
-    const resolvedPath = path.resolve(folderPath);
+    const resolvedPath = resolveTenantFolderPath(user, folderPath);
     if (!fs.existsSync(resolvedPath)) {
       res.status(404).json({ error: `Folder not found: "${resolvedPath}"` });
       return;
@@ -2247,54 +2272,51 @@ app.post("/api/sync/scan", requireAuth, express.json({ limit: '10mb' }), async (
 app.post("/api/sync/start", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { folderPath, selectedFiles, syncMode, storageTarget } = req.body;
   const user = (req as any).user;
-  if (!folderPath || !selectedFiles || !Array.isArray(selectedFiles) || selectedFiles.length === 0) {
-    res.status(400).json({ error: 'Folder path and selected files are required.' });
+  if (!selectedFiles || !Array.isArray(selectedFiles) || selectedFiles.length === 0) {
+    res.status(400).json({ error: 'Selected files are required.' });
     return;
   }
 
-  const syncId = `sync_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  try {
+    const validFolderPath = resolveTenantFolderPath(user, folderPath);
+    const syncId = `sync_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-  const job: SyncJob = {
-    syncId,
-    folderPath,
-    selectedFiles,
-    syncMode: syncMode || 'reference',
-    storageTarget,
-    status: 'running',
-    progress: { percent: 0, currentFile: '', filesCompleted: 0, totalFiles: selectedFiles.length, stage: 'Starting...' },
-    errors: [],
-    createdAt: Date.now(),
-    _user: user, // Attach user info for storage folder resolution
-  };
+    const job: SyncJob = {
+      syncId,
+      folderPath: validFolderPath,
+      selectedFiles,
+      syncMode: syncMode || 'reference',
+      storageTarget,
+      status: 'running',
+      progress: { percent: 0, currentFile: '', filesCompleted: 0, totalFiles: selectedFiles.length, stage: 'Starting...' },
+      errors: [],
+      createdAt: Date.now(),
+      _user: user, // Attach user info for storage folder resolution
+    };
 
-  activeSyncJobs.set(syncId, job);
+    activeSyncJobs.set(syncId, job);
 
-  // Process sync in background (simulated — in production, use a proper queue)
-  processSyncJob(job).catch(err => {
-    console.error(`Sync job ${syncId} failed:`, err);
-    job.status = 'error';
-    job.errors.push((err && typeof err.message === 'string' ? err.message : String(err)) || 'Unknown sync error');
-  });
+    // Process sync in background
+    processSyncJob(job).catch(err => {
+      console.error(`Sync job ${syncId} failed:`, err);
+      job.status = 'error';
+      job.errors.push((err && typeof err.message === 'string' ? err.message : String(err)) || 'Unknown sync error');
+    });
 
-  res.json({ success: true, syncId, message: `Sync started for ${selectedFiles.length} file(s).` });
+    res.json({ success: true, syncId, message: `Sync started for ${selectedFiles.length} file(s).` });
+  } catch (err: any) {
+    res.status(403).json({ error: err.message || "Access denied" });
+  }
 });
 
 async function processSyncJob(job: SyncJob) {
-  const resolvedPath = path.resolve(job.folderPath);
   const user = (job as any)._user; // User info attached when job is created
-  const storage = loadSystemConfig();
-  const baseStoragePath = storage.storageFolder;
+  const baseStoragePath = loadSystemConfig().storageFolder;
+  const resolvedPath = user ? resolveTenantFolderPath(user, job.folderPath) : path.resolve(job.folderPath);
+  const userStoragePath = user ? getTenantStoragePath(user) : baseStoragePath;
   
-  // Determine user's storage folder: <storage>/<Company>/<User>/
-  let userStoragePath = baseStoragePath;
-  if (user && user.companyId) {
-    const company = readCompanies().find(c => c.id === user.companyId);
-    if (company) {
-      userStoragePath = path.join(baseStoragePath, sanitizeFolderName(company.name), sanitizeFolderName(user.username));
-      if (!fs.existsSync(userStoragePath)) {
-        fs.mkdirSync(userStoragePath, { recursive: true });
-      }
-    }
+  if (!fs.existsSync(userStoragePath)) {
+    fs.mkdirSync(userStoragePath, { recursive: true });
   }
 
   for (let i = 0; i < job.selectedFiles.length; i++) {
@@ -2521,13 +2543,8 @@ app.post('/api/sync/check-changes', requireAuth, express.json(), async (req, res
   const { folderPath } = req.body;
   const user = (req as any).user;
 
-  if (!folderPath) {
-    res.status(400).json({ error: 'Folder path is required.' });
-    return;
-  }
-
   try {
-    const resolvedPath = path.resolve(folderPath);
+    const resolvedPath = resolveTenantFolderPath(user, folderPath);
     if (!fs.existsSync(resolvedPath)) {
       res.json({ changed: true, disconnected: true, newFiles: [], deletedFiles: [], modifiedFiles: [] });
       return;
@@ -3601,12 +3618,24 @@ function saveSystemConfig(config: SystemConfig): boolean {
 }
 
 // GET /api/system/config — shared config consumed by agliner & ortho
-app.get("/api/system/config", (_req, res) => {
+app.get("/api/system/config", (req: express.Request, res) => {
   const config = loadSystemConfig();
+  let effectiveStorageFolder = config.storageFolder;
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const user = token ? getSessionUser(token) : null;
+  if (user && user.role !== "admin") {
+    try {
+      effectiveStorageFolder = getTenantStoragePath(user);
+    } catch {
+      /* fallback */
+    }
+  }
   res.json({
     ...config,
+    storageFolder: effectiveStorageFolder,
     aiAvailable: getGeminiClient() !== null,
-    storageExists: fs.existsSync(config.storageFolder),
+    storageExists: fs.existsSync(effectiveStorageFolder),
   });
 });
 
@@ -4559,7 +4588,21 @@ Format your responses using clean, readable markdown with bold headers and lists
 });
 app.get("/api/history", requireAuth, (req: AuthedRequest, res) => {
   const history = readHistory();
-  res.json(filterHistoryForUser(history, req.user!, req.company || null));
+  const users = readUsers();
+  const companies = readCompanies();
+
+  // Enrich history cases with user and company names
+  const enrichedHistory = history.map((c) => {
+    const owner = users.find((u) => u.id === c.ownerUserId);
+    const company = companies.find((comp) => comp.id === c.companyId);
+    return {
+      ...c,
+      ownerUsername: owner ? owner.username : c.ownerUsername || null,
+      companyName: company ? company.name : c.companyName || null,
+    };
+  });
+
+  res.json(filterHistoryForUser(enrichedHistory, req.user!, req.company || null));
 });
 
 // DELETE /api/history/:id - Clear a specific case (owner or admin only)
@@ -5019,7 +5062,9 @@ const analyzeHandler = async (req: AuthedRequest, res: express.Response) => {
       files: uploadedFilesMetadata,
       status: "pending" as const,
       ownerUserId: req.user?.id || null,
+      ownerUsername: req.user?.username || null,
       companyId: req.user?.companyId || null,
+      companyName: req.company?.name || null,
     };
 
     // Save initial case with pending status

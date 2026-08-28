@@ -768,10 +768,17 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
     };
   }, []);
 
-  // Load history from backend on mount
+  // Load history from backend whenever authenticated user changes
   useEffect(() => {
-    fetchHistory();
-  }, []);
+    if (auth.user) {
+      fetchHistory();
+    } else {
+      setHistoryCases([]);
+      setActiveCaseId(null);
+      setActiveResult(null);
+      setPrescriptionText("");
+    }
+  }, [auth.user?.id]);
 
   const fetchHistory = async () => {
     try {
