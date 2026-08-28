@@ -7,16 +7,11 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Server,
-  Settings2,
   CheckCircle2,
   Wifi,
   WifiOff,
-  ChevronDown,
-  ChevronUp,
   KeyRound,
 } from "lucide-react";
-import { getServerAddress, setServerAddress as setAuthServerAddress } from "../lib/auth";
 
 interface LoginPageProps {
   readonly needsSetup: boolean;
@@ -35,16 +30,12 @@ export default function LoginPage({ needsSetup, onLogin, onSetupAdmin }: LoginPa
   // Password visibility
   const [showPassword, setShowPassword] = useState(false);
 
-  // Server address setting (collapsible)
-  const [showServerSettings, setShowServerSettings] = useState(false);
-  const [serverAddress, setServerAddress] = useState(getServerAddress());
-
   // Connection & status state
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
 
-  // Check server health on mount & when serverAddress changes
+  // Check server health on mount
   useEffect(() => {
     let cancelled = false;
     async function checkHealth() {
@@ -59,12 +50,7 @@ export default function LoginPage({ needsSetup, onLogin, onSetupAdmin }: LoginPa
     return () => {
       cancelled = true;
     };
-  }, [serverAddress]);
-
-  const handleServerAddressChange = (val: string) => {
-    setServerAddress(val);
-    setAuthServerAddress(val);
-  };
+  }, []);
 
   const handleQuickFill = (u: string, p: string) => {
     setUsername(u);
@@ -315,43 +301,6 @@ export default function LoginPage({ needsSetup, onLogin, onSetupAdmin }: LoginPa
               )}
             </button>
           </form>
-
-          {/* Advanced Server Address Accordion (Optional for Remote Clients) */}
-          <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 px-6 py-2.5">
-            <button
-              type="button"
-              onClick={() => setShowServerSettings(!showServerSettings)}
-              className="w-full flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer transition-colors"
-            >
-              <div className="flex items-center gap-1.5 font-medium">
-                <Settings2 className="w-3.5 h-3.5 text-slate-400" />
-                <span>Server Connection Settings</span>
-              </div>
-              {showServerSettings ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
-
-            {showServerSettings && (
-              <div className="mt-3 pb-2 space-y-2 text-xs animate-in fade-in duration-200">
-                <label htmlFor="login-server-address" className="text-[10px] uppercase tracking-wider font-bold text-slate-400 dark:text-slate-500 block">
-                  Server Address <span className="normal-case font-normal">(leave empty for default)</span>
-                </label>
-                <div className="relative">
-                  <Server className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    id="login-server-address"
-                    type="text"
-                    value={serverAddress}
-                    onChange={(e) => handleServerAddressChange(e.target.value)}
-                    placeholder="https://192.168.1.50:3000"
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs font-mono text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-[#46c0bd]"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">
-                  For remote laptops or tablets connecting across LAN. Leave blank when running directly on this computer.
-                </p>
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Footer info */}
