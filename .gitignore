@@ -69,3 +69,5 @@ yarn-debug.log*
 yarn-error.log*
 # ── Multi-user auth data (users, companies, sessions, update log) ── NEVER commit ──
 server-data/
+# ── Local machine config (storage folder path is machine-specific) ─────
+system_config.json
