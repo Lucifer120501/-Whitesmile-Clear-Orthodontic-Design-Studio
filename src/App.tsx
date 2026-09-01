@@ -33,7 +33,9 @@ import {
   ShieldCheck,
   UserRound,
   Terminal,
-  BookOpen
+  BookOpen,
+  Menu,
+  X,
 } from "lucide-react";
 
 import FolderSyncContainer from "./components/FolderSyncContainer";
@@ -57,6 +59,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState<"workspace" | "cheatsheet" | "local" | "storage" | "ai-manager" | "admin">("workspace");
   const [selectedMaterial, setSelectedMaterial] = useState("PETG 1.0mm Thermoforming Sheet");
+
+  // Left nav drawer (hamburger — tablets/mobile friendly) — keeps nav off the top bar
+  const [navOpen, setNavOpen] = useState(false);
 
   // Sidebar collapsible panels — keeps everything visible without scrolling
   const [sidebarAnalysisOpen, setSidebarAnalysisOpen] = useState(true);
@@ -1361,6 +1366,21 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
   const isAdmin = auth.user.role === "admin";
   const analysisEnabled = auth.enabledPacks.includes("analysis");
 
+  // Navigation items for the left hamburger drawer
+  const navItems: {
+    id: "workspace" | "cheatsheet" | "local" | "storage" | "ai-manager" | "admin";
+    label: string;
+    icon: React.ReactNode;
+    adminOnly?: boolean;
+  }[] = [
+    { id: "workspace", label: "Workspace Terminal", icon: <Terminal className="w-4 h-4" /> },
+    { id: "cheatsheet", label: "Manufacturing Rules Cheatsheet", icon: <BookOpen className="w-4 h-4" /> },
+    { id: "ai-manager", label: "AI Manager", icon: <Sparkles className="w-4 h-4" />, adminOnly: true },
+    { id: "local", label: "Local Folder Sync", icon: <Database className="w-4 h-4" />, adminOnly: true },
+    { id: "storage", label: "Storage", icon: <Archive className="w-4 h-4" />, adminOnly: true },
+    { id: "admin", label: "Admin Panel", icon: <ShieldCheck className="w-4 h-4" />, adminOnly: true },
+  ];
+
   return (
     <div className="min-h-screen bg-slate-50 print:bg-white font-sans flex flex-col antialiased">
       {/* Floating Toast Notifications */}
@@ -1388,130 +1408,133 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
         ))}
       </div>
 
-      {/* Dental Lab Industrial Style Header */}
-      <header className="bg-[#46c0bd] border-b border-[#3ba6a3] py-4 px-6 md:px-8 shadow-sm shrink-0 print:hidden">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <AlignerLogo iconOnly={true} className="text-white" />
-            <div className="h-8 w-[1px] bg-white/20 hidden md:block"></div>
-            <div>
-              <h1 className="text-xl font-bold text-white tracking-tight">
-                Whitesmile Clear
-              </h1>
-              <p className="text-xs text-white/80 mt-0.5 font-medium tracking-wide">
-                Orthodontic Design Studio
-              </p>
+      {/* Dental Lab Industrial Style Header — hamburger nav for tablets/mobile */}
+      <header className="bg-[#46c0bd] border-b border-[#3ba6a3] py-3 px-4 md:px-6 shadow-sm shrink-0 print:hidden z-30">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setNavOpen(true)}
+              className="p-2 rounded-lg text-white hover:bg-white/10 active:bg-white/15 transition-colors cursor-pointer shrink-0"
+              aria-label="Open navigation menu"
+              title="Open menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <AlignerLogo iconOnly={true} className="text-white shrink-0" />
+            <div className="h-8 w-[1px] bg-white/20 hidden sm:block shrink-0"></div>
+            <div className="min-w-0 hidden sm:block">
+              <h1 className="text-lg font-bold text-white tracking-tight truncate">Whitesmile Clear</h1>
+              <p className="text-[11px] text-white/80 mt-0.5 font-medium tracking-wide truncate">Orthodontic Design Studio</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCurrentTab("workspace")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
-                currentTab === "workspace"
-                  ? "bg-white text-[#46c0bd] shadow-xs border-white"
-                  : "bg-white/10 hover:bg-white/20 text-white border-white/25"
-              }`}
-              id="tab-btn-workspace"
-            >
-              <Terminal className="w-3.5 h-3.5" />
-              Workspace Terminal
-            </button>
-            <button
-              onClick={() => setCurrentTab("cheatsheet")}
-              className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
-                currentTab === "cheatsheet"
-                  ? "bg-white text-[#46c0bd] shadow-xs border-white"
-                  : "bg-white/10 hover:bg-white/20 text-white border-white/25"
-              }`}
-              id="tab-btn-cheatsheet"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              Manufacturing Rules Cheatsheet
-            </button>
-            {isAdmin && (
-              <button
-                onClick={() => setCurrentTab("ai-manager")}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
-                  currentTab === "ai-manager"
-                    ? "bg-white text-[#46c0bd] shadow-xs border-white"
-                    : "bg-white/10 hover:bg-white/20 text-white border-white/25"
-                }`}
-                id="tab-btn-ai-manager"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                AI Manager
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                onClick={() => setCurrentTab("local")}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
-                  currentTab === "local"
-                    ? "bg-white text-[#46c0bd] shadow-xs border-white"
-                    : "bg-white/10 hover:bg-white/20 text-white border-white/25"
-                }`}
-                id="tab-btn-local"
-              >
-                <Database className="w-3.5 h-3.5" />
-                Local Folder Sync
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                onClick={() => setCurrentTab("storage")}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
-                  currentTab === "storage"
-                    ? "bg-white text-[#46c0bd] shadow-xs border-white"
-                    : "bg-white/10 hover:bg-white/20 text-white border-white/25"
-                }`}
-                id="tab-btn-storage"
-              >
-                <Archive className="w-3.5 h-3.5" />
-                Storage
-              </button>
-            )}
-
-            {isAdmin && (
-              <button
-                onClick={() => setCurrentTab("admin")}
-                className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 h-9 border ${
-                  currentTab === "admin"
-                    ? "bg-white text-[#46c0bd] shadow-xs border-white"
-                    : "bg-white/10 hover:bg-white/20 text-white border-white/25"
-                }`}
-                id="tab-btn-admin"
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Admin Panel
-              </button>
-            )}
-
-            {/* User badge + logout */}
-            <div className="flex items-center gap-2 pl-2 ml-1 border-l border-white/20">
-              <div className="flex items-center gap-1.5 text-white">
-                <UserRound className="w-3.5 h-3.5 text-white/70" />
-                <div className="leading-tight">
-                  <span className="text-[11px] font-bold block">{auth.user.username}</span>
-                  <span className="text-[9px] text-white/70 block">
-                    {auth.company ? auth.company.name : isAdmin ? "Administrator" : "No company"}
-                  </span>
-                </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 text-white">
+              <UserRound className="w-4 h-4 text-white/70" />
+              <div className="leading-tight hidden sm:block">
+                <span className="text-xs font-bold block">{auth.user.username}</span>
+                <span className="text-[9px] text-white/70 block">
+                  {auth.company ? auth.company.name : isAdmin ? "Administrator" : "No company"}
+                </span>
               </div>
-              <button
-                onClick={async () => {
-                  await auth.logout();
-                  setCurrentTab("workspace");
-                }}
-                className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-                title="Sign out"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
             </div>
+            <button
+              onClick={async () => {
+                await auth.logout();
+                setCurrentTab("workspace");
+              }}
+              className="p-2 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </header>
+
+      {/* Tablet / Mobile Left Nav Drawer (hamburger) — about 1/4–1/3 screen width */}
+      <div
+        className={`fixed inset-0 z-[60] bg-slate-900/50 backdrop-blur-sm transition-opacity duration-200 ${
+          navOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+        onClick={() => setNavOpen(false)}
+        aria-hidden="true"
+      />
+      <div
+        className={`fixed inset-y-0 left-0 z-[70] w-72 max-w-[85vw] bg-slate-900 border-r border-slate-800 shadow-2xl transform transition-transform duration-300 ease-out flex flex-col ${
+          navOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Main navigation"
+      >
+        {/* Drawer header */}
+        <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-800 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <AlignerLogo iconOnly={false} className="text-[#46c0bd]" />
+          </div>
+          <button
+            type="button"
+            onClick={() => setNavOpen(false)}
+            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+            aria-label="Close navigation menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Nav items — touch friendly */}
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-1">
+          {navItems
+            .filter((ni) => !ni.adminOnly || isAdmin)
+            .map((ni) => (
+              <button
+                key={ni.id}
+                type="button"
+                onClick={() => {
+                  setCurrentTab(ni.id);
+                  setNavOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold transition-colors cursor-pointer text-left ${
+                  currentTab === ni.id
+                    ? "bg-[#46c0bd]/15 text-[#46c0bd] border border-[#46c0bd]/30"
+                    : "text-slate-300 hover:bg-slate-800 hover:text-white border border-transparent"
+                }`}
+              >
+                <span className="shrink-0">{ni.icon}</span>
+                <span className="truncate">{ni.label}</span>
+              </button>
+            ))}
+        </nav>
+
+        {/* Drawer footer — current user + sign out */}
+        <div className="p-4 border-t border-slate-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-[#46c0bd]/20 text-[#46c0bd] flex items-center justify-center font-bold shrink-0">
+              {auth.user.username.charAt(0).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-white truncate">{auth.user.username}</p>
+              <p className="text-[11px] text-slate-400 truncate">
+                {auth.company ? auth.company.name : isAdmin ? "Administrator" : "No company"}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              await auth.logout();
+              setCurrentTab("workspace");
+              setNavOpen(false);
+            }}
+            className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 text-sm font-semibold transition-colors cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" /> Sign Out
+          </button>
+        </div>
+      </div>
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 flex flex-col lg:flex-row gap-8 overflow-hidden print:block print:p-0 print:m-0 print:max-w-none">
