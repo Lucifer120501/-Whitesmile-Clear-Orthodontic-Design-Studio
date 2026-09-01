@@ -24,8 +24,8 @@ export default function CaseHistory({ cases, onSelectCase, onDeleteCase, activeC
   };
 
   return (
-    <div id="case-history-sidebar" className="bg-white rounded-xl border border-slate-200 shadow-xs flex flex-col overflow-hidden">
-      <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+    <div id="case-history-sidebar" className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 shadow-xs flex flex-col overflow-hidden">
+      <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 flex items-center gap-2">
         <History className="w-5 h-5 text-blue-600" id="history-icon" />
         <h3 className="font-semibold text-slate-800 text-sm">Lab Case Logs</h3>
         <span className="ml-auto bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
@@ -33,7 +33,7 @@ export default function CaseHistory({ cases, onSelectCase, onDeleteCase, activeC
         </span>
       </div>
 
-      <div className="overflow-y-auto divide-y divide-slate-100 max-h-[220px]" id="history-list">
+      <div className="overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 max-h-[220px]" id="history-list">
         {cases.length === 0 ? (
           <div className="p-8 text-center" id="empty-history">
             <p className="text-slate-400 text-sm italic">No cases logged yet.</p>
@@ -52,13 +52,13 @@ export default function CaseHistory({ cases, onSelectCase, onDeleteCase, activeC
                 onClick={() => onSelectCase(c)}
                 className={`p-4 text-left cursor-pointer transition-all ${
                   isActive
-                    ? "bg-blue-50/50 border-l-4 border-blue-600"
-                    : "hover:bg-slate-50/70 border-l-4 border-transparent"
+                    ? "bg-blue-50/50 dark:bg-blue-500/10 border-l-4 border-blue-600 dark:border-blue-400"
+                    : "hover:bg-slate-50/70 dark:hover:bg-slate-800/50 border-l-4 border-transparent"
                 }`}
                 id={`history-item-${c.id}`}
               >
                 <div className="flex justify-between items-start mb-1.5">
-                  <span className="font-mono text-xs font-semibold text-slate-800 uppercase">
+                  <span className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-100 uppercase">
                     {c.id}
                   </span>
                   <div className="flex items-center gap-1.5">
@@ -104,7 +104,7 @@ export default function CaseHistory({ cases, onSelectCase, onDeleteCase, activeC
                 )}
 
                 {/* Prescription preview */}
-                <p className="text-slate-600 text-xs line-clamp-2 leading-relaxed mb-3 pr-2">
+                <p className="text-slate-600 dark:text-slate-400 text-xs line-clamp-2 leading-relaxed mb-3 pr-2">
                   {c.prescriptionText || "No prescription text provided."}
                 </p>
 

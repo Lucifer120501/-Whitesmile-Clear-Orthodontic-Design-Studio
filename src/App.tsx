@@ -8,6 +8,7 @@ import AdminPanel from "./components/AdminPanel";
 import SystemsHub from "./components/SystemsHub";
 import SystemsStatusCard from "./components/SystemsStatusCard";
 import { useAuth } from "./hooks/useAuth";
+import { useTheme } from "./theme";
 import { AlignerLogo } from "./components/AlignerLogo";
 import { 
   Upload,
@@ -36,6 +37,8 @@ import {
   BookOpen,
   Menu,
   X,
+  Moon,
+  Sun,
 } from "lucide-react";
 
 import FolderSyncContainer from "./components/FolderSyncContainer";
@@ -43,6 +46,8 @@ import { ContainerState, createEmptyState, saveAnalysisToStorage, saveTempToStor
 import { getApiBase } from "./lib/apiBase";
 
 export default function App() {
+  // ── Theme (night mode toggle) ──
+  const { theme, toggleTheme } = useTheme();
   // ── Auth & multi-tenant session ──
   const auth = useAuth();
 
@@ -1382,7 +1387,7 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 print:bg-white font-sans flex flex-col antialiased">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 dark:text-slate-100 print:bg-white font-sans flex flex-col antialiased">
       {/* Floating Toast Notifications */}
       <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none max-w-sm w-full">
         {toasts.map((toast) => (
@@ -1409,8 +1414,8 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
       </div>
 
       {/* Dental Lab Industrial Style Header — hamburger nav for tablets/mobile */}
-      <header className="bg-[#46c0bd] border-b border-[#3ba6a3] py-3 px-4 md:px-6 shadow-sm shrink-0 print:hidden z-30">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+      <header className="bg-[#46c0bd] dark:bg-[#2c8c89] border-b border-[#3ba6a3] dark:border-[#236e6c] py-3 px-4 md:px-6 shadow-sm shrink-0 print:hidden z-30">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -1430,6 +1435,16 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {/* Night-mode toggle */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="p-2 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              title={theme === "dark" ? "Switch to light mode" : "Switch to night mode"}
+              aria-label="Toggle night mode"
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
             <div className="flex items-center gap-1.5 text-white">
               <UserRound className="w-4 h-4 text-white/70" />
               <div className="leading-tight hidden sm:block">
@@ -1509,6 +1524,23 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             ))}
         </nav>
 
+        {/* Drawer theme toggle */}
+        <div className="px-4 pt-3 shrink-0">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer border border-slate-800"
+          >
+            <span className="flex items-center gap-3">
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              <span>{theme === "dark" ? "Light mode" : "Night mode"}</span>
+            </span>
+            <span className={`relative w-9 h-5 rounded-full transition-colors ${theme === "dark" ? "bg-[#46c0bd]" : "bg-slate-700"}`}>
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${theme === "dark" ? "left-4.5" : "left-0.5"}`} />
+            </span>
+          </button>
+        </div>
+
         {/* Drawer footer — current user + sign out */}
         <div className="p-4 border-t border-slate-800 shrink-0">
           <div className="flex items-center gap-3">
@@ -1537,11 +1569,11 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
       </div>
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 flex flex-col lg:flex-row gap-8 overflow-hidden print:block print:p-0 print:m-0 print:max-w-none">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 md:p-6 lg:p-8 flex flex-col lg:flex-row gap-4 lg:gap-8 overflow-hidden print:block print:p-0 print:m-0 print:max-w-none">
         
-        {/* Left Hand: History Sidebar (Workspace only) */}
+        {/* Left Hand: History Sidebar (Workspace only) — below main content on mobile */}
         {currentTab === "workspace" && (
-          <section className="w-full lg:w-80 shrink-0 print:hidden flex flex-col gap-2" id="sidebar-section">
+          <section className="w-full lg:w-80 shrink-0 print:hidden flex flex-col gap-2 order-2 lg:order-none" id="sidebar-section">
             {isAdmin && (
               <div className="shrink-0">
                 <SystemsStatusCard />
@@ -1558,10 +1590,10 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             </div>
 
             {/* Persistent analysis status footer */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-xs shrink-0">
+            <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 shadow-xs shrink-0">
               <button
                 onClick={() => setSidebarAnalysisOpen(!sidebarAnalysisOpen)}
-                className="w-full px-5 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-100 transition-colors"
+                className="w-full px-5 py-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 title={sidebarAnalysisOpen ? 'Collapse' : 'Expand'}
               >
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">
@@ -1618,7 +1650,7 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             </div>
 
             {/* ── Antivirus & Antibug System Container ────────────────────────── */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden shrink-0">
+            <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 shadow-xs overflow-hidden shrink-0">
               <button
                 onClick={() => setSidebarAntivirusOpen(!sidebarAntivirusOpen)}
                 className="w-full px-5 py-3 border-b border-slate-100 bg-gradient-to-r from-rose-50 to-red-50/50 flex items-center gap-2 text-left cursor-pointer hover:brightness-95 transition-all"
@@ -1793,8 +1825,8 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
           </section>
         )}
 
-        {/* Right Hand: Main Panel Workspace */}
-        <section className="flex-1 min-w-0 space-y-6 print:space-y-0" id="workspace-main-panel">
+        {/* Right Hand: Main Panel Workspace — first on mobile */}
+        <section className="flex-1 min-w-0 space-y-4 lg:space-y-6 order-1 lg:order-none print:space-y-0" id="workspace-main-panel">
           {currentTab === "admin" && (
             <AdminPanel
               packs={auth.packs}
@@ -1997,7 +2029,7 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
                 }}
               />
               {/* Storage hierarchy info */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
+              <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 p-6 shadow-xs">
                 <div className="flex items-center gap-2 mb-2">
                   <Archive className="w-4 h-4 text-indigo-600" />
                   <span className="text-xs font-bold text-slate-700">Folder Hierarchy</span>
@@ -2013,9 +2045,9 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
             <div className="space-y-6">
 
               {/* API Key Management */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
-                <div className="flex items-center gap-2 border-b border-slate-100 pb-4 mb-4">
-                  <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
+              <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 p-6 shadow-xs">
+                <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
+                  <div className="p-2 bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
                   </div>
                   <div>
@@ -2123,9 +2155,9 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
               </div>
 
               {/* AI Provider Registry — paste the AI list, detect, activate/deactivate */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
-                <div className="flex items-center gap-2 border-b border-slate-100 pb-4 mb-4">
-                  <div className="p-2 bg-cyan-50 text-cyan-600 rounded-xl">
+              <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 p-6 shadow-xs">
+                <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
+                  <div className="p-2 bg-cyan-50 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 rounded-xl">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
                   </div>
                   <div>
@@ -2299,8 +2331,8 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
               </div>
 
               {/* AI Engine Status Card */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
+              <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 p-6 shadow-xs">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
                   <div className="flex items-center gap-2">
                     <div className="p-2 bg-purple-50 text-purple-600 rounded-xl">
                       <Cpu className="w-5 h-5" />
@@ -2352,8 +2384,8 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
               </div>
 
               {/* Core Memory & Clinical Ruleset Panel */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs" id="core-memory-panel">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4 mb-4">
+              <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 p-6 shadow-xs" id="core-memory-panel">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
                   <div className="flex items-center gap-2">
                     <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
                       <Brain className="w-5 h-5" />
@@ -2456,9 +2488,9 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
               </div>
 
               {/* AI Configuration & Controls */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
-                <div className="flex items-center gap-2 border-b border-slate-100 pb-4 mb-4">
-                  <div className="p-2 bg-slate-50 text-slate-600 rounded-xl">
+              <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 p-6 shadow-xs">
+                <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
+                  <div className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl">
                     <Settings className="w-5 h-5" />
                   </div>
                   <div>
@@ -2542,8 +2574,8 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
               </div>
 
               {/* Knowledge Resources: Paste Text & Links to Feed AI Brain */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
+              <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 p-6 shadow-xs">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4 mb-4">
                   <div className="flex items-center gap-2">
                     <div className="p-2 bg-teal-50 text-teal-600 rounded-xl">
                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01"/><path d="M12 10h.01"/><path d="M16 10h.01"/></svg>
@@ -2803,8 +2835,8 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
               )}
 
               {/* Form and Submission Section */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs print:hidden">
-                <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
+              <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 p-6 shadow-xs print:hidden">
+                <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
                   <h2 className="text-md font-bold text-slate-800 flex items-center gap-2">
                     <FileText className="w-5 h-5 text-blue-600" />
                     Submit New Retainer Case

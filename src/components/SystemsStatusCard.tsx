@@ -44,9 +44,9 @@ export default function SystemsStatusCard() {
   ];
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-xs">
+    <div className="bg-white dark:bg-slate-900 dark:border-slate-700/60 rounded-xl border border-slate-200 shadow-xs">
       {/* Card header */}
-      <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-2">
+      <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between gap-2">
         <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
           <Layers className="w-3.5 h-3.5 text-[#46c0bd]" />
           WhiteSmile Unified Systems
@@ -63,12 +63,12 @@ export default function SystemsStatusCard() {
       {/* Vertical system status list */}
       <div className="p-2 space-y-1">
         {systemCards.map((s) => (
-          <div key={s.id} className="border border-slate-200 rounded-lg px-2 py-1.5 flex items-center gap-2">
+          <div key={s.id} className="border border-slate-200 dark:border-slate-700/60 rounded-lg px-2 py-1.5 flex items-center gap-2">
             <div className={`w-7 h-7 rounded-lg ${s.color} flex items-center justify-center shrink-0`}>
               {s.icon}
             </div>
             <div className="min-w-0 flex-1 flex items-center gap-1.5">
-              <span className="text-[11px] font-bold text-slate-800 truncate">{s.name}</span>
+              <span className="text-[11px] font-bold text-slate-800 dark:text-slate-100 truncate">{s.name}</span>
               {s.up ? (
                 <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
               ) : (
@@ -95,9 +95,9 @@ export default function SystemsStatusCard() {
         ))}
 
         {/* Shared storage + AI status */}
-        <div className="pt-1.5 mt-1 border-t border-slate-100 text-[9px] space-y-1">
+        <div className="pt-1.5 mt-1 border-t border-slate-100 dark:border-slate-800 text-[9px] space-y-1">
           <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-slate-600 flex items-center gap-1 shrink-0">
+            <span className="font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1 shrink-0">
               <Archive className="w-3 h-3 text-[#46c0bd]" />
               Storage:
             </span>
