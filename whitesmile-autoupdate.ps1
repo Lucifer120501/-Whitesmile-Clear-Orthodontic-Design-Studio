@@ -10,6 +10,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 # Prevent git credential/terminal prompts from ever hanging the hidden session
 $env:GIT_TERMINAL_PROMPT = 0
 $env:GIT_ASKPASS = $null
+$env:GCM_INTERACTIVE = 'never'
 
 $Project = 'L:\New folder\beta'
 $LogDir  = Join-Path $Project 'server-data\run'
@@ -76,7 +77,7 @@ while ($true) {
     }
 
     # Fetch the latest remote state (do not merge yet)
-    $fetchOut = & git -c credential.helper= fetch --quiet origin main 2>&1
+    $fetchOut = & git -c credential.interactive=false fetch --quiet origin main 2>&1
     $fetchCode = $LASTEXITCODE
     if ($fetchCode -ne 0) {
         Write-Log "git fetch failed (code $fetchCode). Retrying next cycle. $fetchOut"
