@@ -77,8 +77,8 @@ while ($true) {
         continue
     }
 
-    # Install any new/changed dependencies
-    npm install --omit=dev *>> (Join-Path $LogDir 'install.log')
+    # Install dependencies (full install - devDependencies are needed for the build)
+    npm install *>> (Join-Path $LogDir 'install.log')
 
     # Rebuild the production bundle / server
     Write-Log 'Rebuilding...'
