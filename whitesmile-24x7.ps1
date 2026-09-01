@@ -70,8 +70,9 @@ if ($m.Success) {
 }
 
 # ── 5) Auto-updater (polls GitHub, rebuilds + restarts on new push) ──────
+$updaterScript = Join-Path $Project 'whitesmile-autoupdate.ps1'
 $updater = Start-Process -FilePath 'powershell.exe' `
-    -ArgumentList '-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',(Join-Path $Project 'whitesmile-autoupdate.ps1') `
+    -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updaterScript`"" `
     -WorkingDirectory $Project `
     -WindowStyle Hidden `
     -RedirectStandardOutput (Join-Path $LogDir 'autoupdate.out.log') `
