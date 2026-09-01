@@ -284,6 +284,16 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
+// ── Crash guards — log and keep serving instead of dying (e.g. AI 429s) ──
+// Node >= 15 treats unhandled promise rejections as fatal, which took the whole
+// server down when Gemini returned 429 RESOURCE_EXHAUSTED. Log and survive.
+process.on("unhandledRejection", (reason) => {
+  console.error("[Unhandled Rejection]", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[Uncaught Exception]", err);
+});
+
 // ── Reverse proxy (HTTP) — forward requests to the satellite servers ──
 function proxyTo(targetPort: number, opts: { stripPrefix?: string; addPrefix?: string } = {}) {
   return (req: express.Request, res: express.Response) => {

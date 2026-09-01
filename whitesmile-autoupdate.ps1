@@ -52,10 +52,28 @@ function Restart-Server {
     Write-Log "Started new server (pid $($server.Id))."
 }
 
+function Test-ServerAlive {
+    # Watchdog check: is the tracked server process running AND port 3000 listening?
+    $pidFile = Join-Path $LogDir 'server.pid'
+    if (-not (Test-Path $pidFile)) { return $false }
+    $p = (Get-Content $pidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if (-not $p) { return $false }
+    $proc = Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue
+    if (-not $proc) { return $false }
+    $conn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
+    return [bool]$conn
+}
+
 Write-Log 'Auto-updater started.'
 
 while ($true) {
     Start-Sleep -Seconds $PollSeconds
+
+    # Watchdog: if the server died (e.g. crash), bring it back up
+    if (-not (Test-ServerAlive)) {
+        Write-Log 'Watchdog: server not responding — restarting...'
+        Restart-Server
+    }
 
     # Fetch the latest remote state (do not merge yet)
     $fetchOut = & git -c credential.helper= fetch --quiet origin main 2>&1
