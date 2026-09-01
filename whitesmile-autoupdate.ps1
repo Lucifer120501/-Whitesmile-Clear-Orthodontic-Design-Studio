@@ -7,6 +7,10 @@
 # ─────────────────────────────────────────────────────────────────────────
 $ErrorActionPreference = 'SilentlyContinue'
 
+# Prevent git credential/terminal prompts from ever hanging the hidden session
+$env:GIT_TERMINAL_PROMPT = 0
+$env:GIT_ASKPASS = $null
+
 $Project = 'L:\New folder\beta'
 $LogDir  = Join-Path $Project 'server-data\run'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -54,9 +58,10 @@ while ($true) {
     Start-Sleep -Seconds $PollSeconds
 
     # Fetch the latest remote state (do not merge yet)
-    git fetch origin main *> $null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log 'git fetch failed (network or auth). Retrying next cycle.'
+    $fetchOut = & git -c credential.helper= fetch --quiet origin main 2>&1
+    $fetchCode = $LASTEXITCODE
+    if ($fetchCode -ne 0) {
+        Write-Log "git fetch failed (code $fetchCode). Retrying next cycle. $fetchOut"
         continue
     }
 
