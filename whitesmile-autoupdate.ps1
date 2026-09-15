@@ -7,10 +7,16 @@
 # ─────────────────────────────────────────────────────────────────────────
 $ErrorActionPreference = 'SilentlyContinue'
 
-# Prevent git credential/terminal prompts from ever hanging the hidden session
+# Prevent git from spawning a terminal prompt (use credential manager instead)
 $env:GIT_TERMINAL_PROMPT = 0
-$env:GIT_ASKPASS = $null
-$env:GCM_INTERACTIVE = 'never'
+
+# Clear ALL Copilot-injected GIT_CONFIG_* variables that block the credential manager.
+# These variables are injected by Copilot and can set credential.interactive=never,
+# which prevents the Windows credential manager from authenticating git operations.
+# GIT_CONFIG_COUNT must also be cleared — it tells git how many entries to expect.
+Get-ChildItem Env: | Where-Object { $_.Name -match '^GIT_CONFIG' } | ForEach-Object {
+    Remove-Item "Env:$($_.Name)" -ErrorAction SilentlyContinue
+}
 
 $Project = 'L:\New folder\beta'
 $LogDir  = Join-Path $Project 'server-data\run'
@@ -24,6 +30,19 @@ function Write-Log([string]$msg) {
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $msg"
     Add-Content -Path $UpdateLog -Value $line
     Write-Output $line
+}
+
+function Debug-Env {
+    $count = if ($env:GIT_CONFIG_COUNT) { $env:GIT_CONFIG_COUNT } else { 'none' }
+    Write-Log "DEBUG: GIT_CONFIG vars: $count"
+    for ($i = 0; $i -lt 10; $i++) {
+        $key = Get-Item "Env:GIT_CONFIG_KEY_$i" -ErrorAction SilentlyContinue
+        $val = Get-Item "Env:GIT_CONFIG_VALUE_$i" -ErrorAction SilentlyContinue
+        if ($key -or $val) {
+            Write-Log "DEBUG:   GIT_CONFIG_KEY_$i=$($key.Value)"
+            Write-Log "DEBUG:   GIT_CONFIG_VALUE_$i=$($val.Value)"
+        }
+    }
 }
 
 function Restart-Server {
@@ -66,6 +85,7 @@ function Test-ServerAlive {
 }
 
 Write-Log 'Auto-updater started.'
+Debug-Env
 
 while ($true) {
     Start-Sleep -Seconds $PollSeconds
@@ -77,8 +97,14 @@ while ($true) {
     }
 
     # Fetch the latest remote state (do not merge yet)
+    Write-Log "DEBUG: Before fetch - GIT_CONFIG vars:"
+    Debug-Env
+    
     $fetchOut = & git -c credential.interactive=false fetch --quiet origin main 2>&1
     $fetchCode = $LASTEXITCODE
+    Write-Log "DEBUG: Fetch exit code: $fetchCode"
+    Write-Log "DEBUG: Fetch output: $fetchOut"
+    
     if ($fetchCode -ne 0) {
         Write-Log "git fetch failed (code $fetchCode). Retrying next cycle. $fetchOut"
         continue
