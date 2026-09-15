@@ -2027,7 +2027,7 @@ function saveCoreMemory(data: { chatInstructions: string; analysisInstructions: 
   }
 }
 
-app.post("/api/local-sync", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/local-sync", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { localPath } = req.body;
 
   if (!localPath) {
@@ -3434,7 +3434,7 @@ app.delete("/api/ai/providers/:id", requireAdmin, (req, res) => {
 });
 
 // ── AI Pro Scan Prep: Professional CAD Scan Preparation ────────────────────
-app.post("/api/pro-scan-prep", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/pro-scan-prep", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { currentParameters, files, caseId, orthoBaseTemplate } = req.body;
   const ai = getGeminiClient();
 
@@ -4016,7 +4016,7 @@ function sendRunEvent(run: AglinerRun, event: string, data: unknown) {
 // POST /api/agliner/pipeline — start a Python pipeline run (browser mode).
 // Body: { kind: "full" | "auto" | "fast", config: {...} } — mirrors the
 // Electron IPC surface in ai cad/aligner-ui/electron/main.cjs.
-app.post("/api/agliner/pipeline", express.json({ limit: "10mb" }), (req, res) => {
+app.post("/api/agliner/pipeline", requireAuth, express.json({ limit: "10mb" }), (req, res) => {
   const { kind = "fast", config = {} } = req.body as {
     kind: "full" | "auto" | "fast";
     config: Record<string, any>;
@@ -4263,7 +4263,7 @@ app.get("/api/agliner/stls", (req, res) => {
 });
 
 // DELETE /api/agliner/pipeline — abort a running pipeline (browser mode)
-app.delete("/api/agliner/pipeline", express.json(), (req, res) => {
+app.delete("/api/agliner/pipeline", requireAuth, express.json(), (req, res) => {
   const runId = String(req.body?.runId || "");
   const run = aglinerRuns.get(runId);
   if (run && run.proc && !run.proc.killed) {
@@ -4281,7 +4281,7 @@ app.delete("/api/agliner/pipeline", express.json(), (req, res) => {
 // into a per-case work dir, runs the agliner fast_pipeline.py (which exports
 // tooth_*.stl + gingiva.stl and mirrors them into the shared storage folder
 // for the ortho system), and streams logs to the Workspace Terminal via SSE.
-app.post("/api/agliner/pipeline-on-uploads", express.json({ limit: "10mb" }), (req, res) => {
+app.post("/api/agliner/pipeline-on-uploads", requireAuth, express.json({ limit: "10mb" }), (req, res) => {
   const { files = [], prescription = "", storagePath = "", cutRatio = 0.3 } = req.body as {
     files?: { name?: string; url?: string }[];
     prescription?: string;
@@ -4453,7 +4453,7 @@ app.post("/api/agliner/pipeline-on-uploads", express.json({ limit: "10mb" }), (r
 // lab never gets blocked when the AI is unreachable.
 
 // POST /api/ai/cut-ratio — agliner segmentation: suggest gum/tooth cut ratio
-app.post("/api/ai/cut-ratio", express.json(), async (req, res) => {
+app.post("/api/ai/cut-ratio", requireAuth, express.json(), async (req, res) => {
   const { z_min, z_max, z_range, archType, vertexCount, bbox, archWidthMm, archDepthMm, verticalProfile } = req.body;
   const ai = getGeminiClient();
   if (!ai) {
@@ -4490,7 +4490,7 @@ Respond ONLY JSON: {"cut_ratio": 0.3}. Default 0.3, clamp 0.1-0.6.
 });
 
 // POST /api/ai/staging-plan — ortho staging: per-tooth movement targets with Core Memory
-app.post("/api/ai/staging-plan", express.json({ limit: "10mb" }), async (req, res) => {
+app.post("/api/ai/staging-plan", requireAuth, express.json({ limit: "10mb" }), async (req, res) => {
   const { prescription, tooth_numbers, num_stages, case_name } = req.body;
   const ai = getGeminiClient();
 
@@ -4615,7 +4615,7 @@ app.post("/api/core-memory", requireAdmin, express.json(), (req, res) => {
 });
 
 // POST /api/design-optimization - AI-assisted design refinement (CoT) with Core Memory
-app.post("/api/design-optimization", express.json({ limit: '50mb' }), async (req, res) => {
+app.post("/api/design-optimization", requireAuth, express.json({ limit: '50mb' }), async (req, res) => {
   const { currentParameters, context, isPrecision = false } = req.body;
   const ai = getGeminiClient();
 
@@ -4696,7 +4696,7 @@ Return as a JSON object with:
 });
 
 // POST /api/quality-audit - Dental safety rule cross-reference with Core Memory
-app.post("/api/quality-audit", express.json({ limit: '50mb' }), async (req, res) => {
+app.post("/api/quality-audit", requireAuth, express.json({ limit: '50mb' }), async (req, res) => {
   const { parameters } = req.body;
   const ai = getGeminiClient();
 
@@ -4773,7 +4773,7 @@ Return JSON: {
 });
 
 // POST /api/cad-editor - Interactive CAD modification
-app.post("/api/cad-editor", express.json({ limit: '50mb' }), async (req, res) => {
+app.post("/api/cad-editor", requireAuth, express.json({ limit: '50mb' }), async (req, res) => {
   const { action, stlData } = req.body;
   // This is a placeholder for actual CAD processing logic
   // Real implementation would interface with an STL processing library or service.
@@ -6156,7 +6156,7 @@ ${allFindings.join('\n\n---\n\n')}
 // ── Headless Blender STL Processor Endpoint ────────────────────────────
 // Invokes Blender --background directly from Node.js (no Python dependency).
 // Runs: blender --background --python blender_script.py -- --input=... --output=...
-app.post("/api/blender/process", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/blender/process", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { inputPath, outputName, decimate } = req.body;
 
   if (!inputPath) {
@@ -6308,7 +6308,7 @@ app.post("/api/blender/process", express.json({ limit: '10mb' }), async (req, re
 // ── Open Blender GUI for Interactive STL Editing ────────────────────
 // Launches Blender in GUI mode (not headless) with the STL file loaded
 // so the user can view and manually edit the mesh.
-app.post("/api/blender/open-gui", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/blender/open-gui", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { inputPath } = req.body;
 
   if (!inputPath) {
@@ -6401,7 +6401,7 @@ app.post("/api/blender/open-gui", express.json({ limit: '10mb' }), async (req, r
 // ── Serve Local File via HTTP ─────────────────────────────────────────
 // Copies a local file (e.g., from Google Drive) to the uploads directory
 // so it can be fetched by the browser for Three.js rendering.
-app.post("/api/files/serve-local", express.json({ limit: '10mb' }), async (req, res) => {
+app.post("/api/files/serve-local", requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) {
     return res.status(400).json({ success: false, error: 'filePath is required.' });
@@ -6436,7 +6436,7 @@ app.post("/api/files/serve-local", express.json({ limit: '10mb' }), async (req, 
 
 // ── Active Learning & Security Endpoints ─────────────────────────────
 // Active Learning: toggle internet search for AI precision
-app.post("/api/active-learning/toggle", express.json(), async (req, res) => {
+app.post("/api/active-learning/toggle", requireAuth, express.json(), async (req, res) => {
   const { enabled } = req.body;
   console.log(`[ActiveLearning] ${enabled ? 'Enabled' : 'Disabled'} — AI will${enabled ? '' : ' not'} search the internet for treatment data.`);
   res.json({ success: true, activeLearning: !!enabled });
@@ -7176,7 +7176,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
     // Serve uploads AFTER Vite middleware so Vite doesn't intercept STL file requests
-    app.use("/uploads", express.static(uploadsDir));
+    app.use("/uploads", requireAuth, express.static(uploadsDir));
   } else {
     // In production mode, serve the static files in dist
     const distPath = path.join(process.cwd(), "dist");
