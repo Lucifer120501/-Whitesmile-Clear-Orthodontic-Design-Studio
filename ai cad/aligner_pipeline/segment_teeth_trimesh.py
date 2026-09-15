@@ -21,6 +21,19 @@ import numpy as np
 import trimesh
 from pathlib import Path
 
+# Import pipeline parameters for consistency
+try:
+    from ortho.aligner_pipeline.config.pipeline_params import GUM_CUT, DET_CUT, GRID_SIZE, MIN_CELLS, SHELL_THICKNESS_MM
+except ImportError:
+    try:
+        from config.pipeline_params import GUM_CUT, DET_CUT, GRID_SIZE, MIN_CELLS, SHELL_THICKNESS_MM
+    except ImportError:
+        GUM_CUT = 0.3
+        DET_CUT = 0.5
+        GRID_SIZE = 240
+        MIN_CELLS = 8
+        SHELL_THICKNESS_MM = 0.75
+
 
 # FDI numbering per arch
 UPPER_FDI_RIGHT = [18, 17, 16, 15, 14, 13, 12, 11]  # right side
@@ -179,7 +192,7 @@ def main():
                         help="Output directory for segmented teeth")
     parser.add_argument("--upper", action="store_true", help="Upper arch (default: auto-detect)")
     parser.add_argument("--lower", action="store_true", help="Lower arch")
-    parser.add_argument("--cut", type=float, default=0.3,
+    parser.add_argument("--cut", type=float, default=GUM_CUT,
                         help="Cut ratio for gum separation (0.0-1.0, default: 0.3)")
     args = parser.parse_args()
     
@@ -217,7 +230,7 @@ def main():
         export_teeth(teeth, args.output, arch_type, mesh)
         print(f"\n[SUCCESS] Segmented {len(teeth)} teeth into: {args.output}")
         print(f"  To run the aligner pipeline on these:")
-        print(f"    python run_pipeline.py all --stls {args.output} --output case_erina --stages 33 --shell 0.75")
+        print(f"    python run_pipeline.py all --stls {args.output} --output case_erina --stages 33 --shell {SHELL_THICKNESS_MM}")
     else:
         print(f"\n[FAILED] Could not segment teeth. Try adjusting --cut ratio (current: {args.cut})")
         print(f"  Try: --cut 0.25 or --cut 0.35")

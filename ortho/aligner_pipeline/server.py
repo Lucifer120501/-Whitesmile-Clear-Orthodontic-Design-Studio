@@ -40,12 +40,14 @@ from config.treatment_plan import (
     save_plan,
     load_plan,
 )
+from config.pipeline_params import SHELL_THICKNESS_MM, OFFSET_MM, UNDERCUT_ANGLE_DEG, GINGIVA_MARGIN_MM
 from plan.plan_io import discover_stl_files
 from plan.staging import compute_staging, compute_staging_nonlinear
 from ai_staging import (
     generate_staging_plan,
     load_main_config,
     save_main_config,
+    probe_main_server,
     DEFAULT_MAIN_SERVER,
 )
 
@@ -293,6 +295,17 @@ async def lifespan(app: FastAPI):
     log.info(f"Plans:    {state.plans_dir}")
     log.info(f"Output:   {state.storage_dir} (shared storage, per case: <storage>/<case>/stages)")
     log.info("=" * 50)
+
+    # Auto-detect an available WhiteSmile main system and save it if needed
+    cfg = await asyncio.to_thread(load_main_config)
+    current_url = cfg.get("main_server_url", DEFAULT_MAIN_SERVER)
+    discovered = await asyncio.to_thread(probe_main_server, current_url)
+    if discovered and discovered != current_url:
+        save_main_config(discovered)
+        log.info(f"[auto-detect] Switched main server URL to {discovered}")
+    elif not discovered:
+        log.warning(f"[auto-detect] No reachable WhiteSmile server at {current_url}")
+
     # Temporary STL policy: wipe every non-finalized case on startup so a
     # refresh/restart never shows a previous patient's design. Only cases the
     # user explicitly finalized (`.finalized` marker) are kept for reopening.
@@ -645,7 +658,7 @@ async def optimize_design(name: str, data: dict = {}):
         "appliance": "Essix",
         "arch": "Both" if any(t >= 30 for t in plan.tooth_numbers) else "Upper",
         "trimLineType": data.get("trim_line_type", "scalloped"),
-        "trimScallopOffset": data.get("trim_scallop_offset", 0.75),
+        "trimScallopOffset": data.get("trim_scallop_offset", SHELL_THICKNESS_MM),
         "shellThickness": plan.shell_thickness_mm,
         "selectedMaterial": data.get("material", "PETG 1.0mm Thermoforming Sheet"),
     }
@@ -715,7 +728,7 @@ async def quality_audit(name: str):
         "appliance": "Essix",
         "arch": "Both" if any(t >= 30 for t in plan.tooth_numbers) else "Upper",
         "trimLineType": "scalloped",
-        "trimScallopOffset": 0.75,
+        "trimScallopOffset": SHELL_THICKNESS_MM,
         "shellThickness": plan.shell_thickness_mm,
         "selectedMaterial": "PETG 1.0mm Thermoforming Sheet",
         "tooth_numbers": plan.tooth_numbers,
@@ -1023,6 +1036,12 @@ async def get_status():
         "blender": state.blender_exe,
         "work_dir": state.work_dir,
         "storage_dir": state.storage_dir,
+        "pipeline_params": {
+            "shell_thickness_mm": SHELL_THICKNESS_MM,
+            "offset_mm": OFFSET_MM,
+            "undercut_angle_deg": UNDERCUT_ANGLE_DEG,
+            "gingiva_margin_mm": GINGIVA_MARGIN_MM,
+        },
     }
 
 

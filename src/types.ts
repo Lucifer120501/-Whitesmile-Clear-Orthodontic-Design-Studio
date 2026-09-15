@@ -9,11 +9,37 @@ export interface DesignParameters {
   special_notes: string;
 }
 
+export interface LeapPrediction {
+  label: string;
+  confidence: number;
+}
+
+export interface LeapResult {
+  version?: number;
+  system?: string;
+  generatedAt?: string;
+  mainClass: string | null;
+  subclasses: string[];
+  combinations: string[];
+  predictions: LeapPrediction[];
+  voxelization?: {
+    resolution: number;
+    grid: string;
+    meshes: number;
+    triangles: number;
+  };
+  clinicalSummary?: string;
+  sequencingNote?: string;
+  status?: "completed" | "failed" | "running";
+  error?: string;
+}
+
 export interface AnalysisResult {
   design_parameters: DesignParameters;
   manufacturing_instructions: string[];
   warnings: string[];
   treatment_plan?: string;
+  leap?: LeapResult;
 }
 
 export interface UploadedFile {

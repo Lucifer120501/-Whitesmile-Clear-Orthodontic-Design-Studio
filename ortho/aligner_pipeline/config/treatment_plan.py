@@ -12,6 +12,16 @@ import json
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+# Import pipeline parameters for consistency
+try:
+    from .pipeline_params import SHELL_THICKNESS_MM, OFFSET_MM, UNDERCUT_ANGLE_DEG, GINGIVA_MARGIN_MM
+except ImportError:
+    # Fallback defaults
+    SHELL_THICKNESS_MM = 0.75
+    OFFSET_MM = 0.1
+    UNDERCUT_ANGLE_DEG = 45.0
+    GINGIVA_MARGIN_MM = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Per-tooth movement target
@@ -86,10 +96,10 @@ class TreatmentPlan:
     """If empty, staging is computed automatically from *movements*."""
 
     # --- Global aligner parameters ---
-    shell_thickness_mm: float = 0.75
-    offset_mm: float = 0.1                # gap between tooth and aligner
-    undercut_block_angle: float = 45.0    # degrees
-    gingiva_margin_mm: float = 1.0        # how far below gumline
+    shell_thickness_mm: float = SHELL_THICKNESS_MM
+    offset_mm: float = OFFSET_MM                # gap between tooth and aligner
+    undercut_block_angle: float = UNDERCUT_ANGLE_DEG    # degrees
+    gingiva_margin_mm: float = GINGIVA_MARGIN_MM        # how far below gumline
 
     # --- Attachments ---
     attachments_enabled: bool = True

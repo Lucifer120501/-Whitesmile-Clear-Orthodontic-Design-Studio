@@ -43,7 +43,7 @@ import {
 
 import FolderSyncContainer from "./components/FolderSyncContainer";
 import { ContainerState, createEmptyState, saveAnalysisToStorage, saveTempToStorage } from "./lib/syncService";
-import { getApiBase } from "./lib/apiBase";
+import { getDetectedApiBase } from "./lib/apiBase";
 
 export default function App() {
   // ── Theme (night mode toggle) ──
@@ -1196,7 +1196,7 @@ Reference Library Connected: ${kbSyncState.complete ? 'Yes' : 'No'}
         return;
       }
 
-      const apiBase = getApiBase();
+      const apiBase = await getDetectedApiBase();
       const response = await fetch(`${apiBase}/api/analyze-case`, {
         method: "POST",
         body: formData,

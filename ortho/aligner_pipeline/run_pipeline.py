@@ -27,6 +27,10 @@ from config.treatment_plan import (
     save_plan,
     load_plan,
 )
+from config.pipeline_params import (
+    GRID_SIZE, DET_CUT, GUM_CUT, MIN_CELLS,
+    SHELL_THICKNESS_MM, OFFSET_MM, UNDERCUT_ANGLE_DEG, GINGIVA_MARGIN_MM,
+)
 from plan.plan_io import discover_stl_files
 from plan.staging import compute_staging, compute_staging_nonlinear
 from blender.run_blender import BlenderRunner
@@ -303,10 +307,10 @@ def main():
     p_plan.add_argument("--stls", required=True, help="Directory containing segmented STLs")
     p_plan.add_argument("--output", "-o", help="Output directory")
     p_plan.add_argument("--stages", type=int, default=20, help="Number of stages")
-    p_plan.add_argument("--shell", type=float, default=0.75, help="Shell thickness (mm)")
-    p_plan.add_argument("--offset", type=float, default=0.1, help="Offset/gap (mm)")
-    p_plan.add_argument("--undercut", type=float, default=45.0, help="Undercut block angle (deg)")
-    p_plan.add_argument("--margin", type=float, default=1.0, help="Gingiva margin (mm)")
+    p_plan.add_argument("--shell", type=float, default=SHELL_THICKNESS_MM, help="Shell thickness (mm)")
+    p_plan.add_argument("--offset", type=float, default=OFFSET_MM, help="Offset/gap (mm)")
+    p_plan.add_argument("--undercut", type=float, default=UNDERCUT_ANGLE_DEG, help="Undercut block angle (deg)")
+    p_plan.add_argument("--margin", type=float, default=GINGIVA_MARGIN_MM, help="Gingiva margin (mm)")
     p_plan.add_argument("--patient-id", default="", help="Patient ID")
     p_plan.add_argument("--no-attachments", action="store_true", help="Disable attachments")
 
@@ -326,10 +330,10 @@ def main():
     p_all.add_argument("--movements", help="JSON file with per-tooth movement targets")
     p_all.add_argument("--output", "-o", help="Output directory")
     p_all.add_argument("--stages", type=int, default=20, help="Number of stages")
-    p_all.add_argument("--shell", type=float, default=0.75, help="Shell thickness (mm)")
-    p_all.add_argument("--offset", type=float, default=0.1, help="Offset/gap (mm)")
-    p_all.add_argument("--undercut", type=float, default=45.0, help="Undercut block angle (deg)")
-    p_all.add_argument("--margin", type=float, default=1.0, help="Gingiva margin (mm)")
+    p_all.add_argument("--shell", type=float, default=SHELL_THICKNESS_MM, help="Shell thickness (mm)")
+    p_all.add_argument("--offset", type=float, default=OFFSET_MM, help="Offset/gap (mm)")
+    p_all.add_argument("--undercut", type=float, default=UNDERCUT_ANGLE_DEG, help="Undercut block angle (deg)")
+    p_all.add_argument("--margin", type=float, default=GINGIVA_MARGIN_MM, help="Gingiva margin (mm)")
     p_all.add_argument("--easing", choices=["linear", "ease-out", "ease-in-out"], default="linear",
                        help="Staging easing curve")
     p_all.add_argument("--blender", help="Blender executable path")
@@ -356,10 +360,10 @@ def run_pipeline(
     gingiva_stl: str = "",
     output_dir: str = "",
     num_stages: int = 20,
-    shell_thickness: float = 0.75,
-    offset_mm: float = 0.1,
-    undercut_angle: float = 45.0,
-    gingiva_margin: float = 1.0,
+    shell_thickness: float = SHELL_THICKNESS_MM,
+    offset_mm: float = OFFSET_MM,
+    undercut_angle: float = UNDERCUT_ANGLE_DEG,
+    gingiva_margin: float = GINGIVA_MARGIN_MM,
     attachments_enabled: bool = True,
     easing: str = "linear",
     export_individual: bool = True,

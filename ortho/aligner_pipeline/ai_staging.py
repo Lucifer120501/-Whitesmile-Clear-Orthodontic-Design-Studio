@@ -28,6 +28,12 @@ from typing import Optional
 
 from config.treatment_plan import TreatmentPlan, ToothMove
 
+# Import pipeline parameters for consistency
+try:
+    from config.pipeline_params import SHELL_THICKNESS_MM
+except ImportError:
+    SHELL_THICKNESS_MM = 0.75
+
 
 # ---------------------------------------------------------------------------
 #  Main system configuration (single AI brain)
@@ -63,6 +69,49 @@ def save_main_config(main_server_url: str) -> dict:
         json.dump(config, f, indent=2)
     print(f"[ai_staging] Saved main server config ({config['main_server_url']})")
     return config
+
+
+# ---------------------------------------------------------------------------
+#  Auto-detection of available WhiteSmile servers
+# ---------------------------------------------------------------------------
+
+_DEFAULT_PROBE_PORTS = [3000, 8080, 8000, 5000]
+
+
+def probe_main_server(server_url: Optional[str] = None,
+                      extra_ports: Optional[list[int]] = None,
+                      timeout: float = 2.0) -> Optional[str]:
+    """Probe *server_url* (or common ports if None) and return the first URL
+    whose ``/api/system/config`` endpoint responds.
+
+    Returns None when no reachable server is found.
+    """
+    candidates: list[str] = []
+
+    if server_url:
+        candidates.append(server_url.rstrip("/"))
+    else:
+        # Try the stored default first, then common ports on localhost
+        candidates.append(DEFAULT_MAIN_SERVER)
+        for port in (extra_ports or _DEFAULT_PROBE_PORTS):
+            if port != 3000:
+                candidates.append(f"http://localhost:{port}")
+
+    for url in candidates:
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                url.rstrip("/") + "/api/system/config",
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read())
+            if isinstance(data, dict):
+                print(f"[ai_staging] Discovered WhiteSmile server at {url}")
+                return url
+        except Exception:
+            continue
+    return None
 
 
 # Backwards-compatible aliases
@@ -314,7 +363,7 @@ def generate_staging_plan(
             tooth_numbers=tooth_numbers,
             movements=movements,
             num_stages=num_stages,
-            shell_thickness_mm=0.75,
+            shell_thickness_mm=SHELL_THICKNESS_MM,
             description=f"Heuristic: {prescription[:80]}",
         )
 
@@ -334,7 +383,7 @@ def generate_staging_plan(
             tooth_numbers=tooth_numbers,
             movements=movements,
             num_stages=result.get("num_stages", num_stages),
-            shell_thickness_mm=result.get("shell_thickness_mm", 0.75),
+            shell_thickness_mm=result.get("shell_thickness_mm", SHELL_THICKNESS_MM),
             description=f"WhiteSmile AI: {result.get('notes', prescription[:80])}",
         )
 

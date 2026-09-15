@@ -20,6 +20,15 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 from typing import Optional
 
+# Import pipeline parameters for consistency
+try:
+    from config.pipeline_params import SHELL_THICKNESS_MM, OFFSET_MM, UNDERCUT_ANGLE_DEG, GINGIVA_MARGIN_MM
+except ImportError:
+    SHELL_THICKNESS_MM = 0.75
+    OFFSET_MM = 0.1
+    UNDERCUT_ANGLE_DEG = 45.0
+    GINGIVA_MARGIN_MM = 1.0
+
 # We import the data models for plan creation
 from config.treatment_plan import TreatmentPlan, ToothMove, Stage, plan_to_json, plan_from_json
 
@@ -113,25 +122,25 @@ class PlanEditorApp:
 
         # Shell thickness
         ttk.Label(left_frame, text="Shell Thickness (mm):").grid(row=row, column=0, sticky="w", pady=2)
-        self.shell_thick_var = tk.DoubleVar(value=0.75)
+        self.shell_thick_var = tk.DoubleVar(value=SHELL_THICKNESS_MM)
         ttk.Entry(left_frame, textvariable=self.shell_thick_var, width=10).grid(row=row, column=1, sticky="w", padx=5)
         row += 1
 
         # Offset (gap)
         ttk.Label(left_frame, text="Offset / Gap (mm):").grid(row=row, column=0, sticky="w", pady=2)
-        self.offset_var = tk.DoubleVar(value=0.1)
+        self.offset_var = tk.DoubleVar(value=OFFSET_MM)
         ttk.Entry(left_frame, textvariable=self.offset_var, width=10).grid(row=row, column=1, sticky="w", padx=5)
         row += 1
 
         # Undercut angle
         ttk.Label(left_frame, text="Undercut Block Angle (deg):").grid(row=row, column=0, sticky="w", pady=2)
-        self.undercut_var = tk.DoubleVar(value=45.0)
+        self.undercut_var = tk.DoubleVar(value=UNDERCUT_ANGLE_DEG)
         ttk.Entry(left_frame, textvariable=self.undercut_var, width=10).grid(row=row, column=1, sticky="w", padx=5)
         row += 1
 
         # Gingiva margin
         ttk.Label(left_frame, text="Gingiva Margin (mm):").grid(row=row, column=0, sticky="w", pady=2)
-        self.margin_var = tk.DoubleVar(value=1.0)
+        self.margin_var = tk.DoubleVar(value=GINGIVA_MARGIN_MM)
         ttk.Entry(left_frame, textvariable=self.margin_var, width=10).grid(row=row, column=1, sticky="w", padx=5)
         row += 1
 

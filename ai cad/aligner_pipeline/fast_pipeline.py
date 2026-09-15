@@ -30,6 +30,24 @@ try:
 except ImportError:
     print("[ERROR] pip install scipy"); sys.exit(1)
 
+# Import pipeline parameters for consistency
+try:
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from ortho.aligner_pipeline.config.pipeline_params import (
+        GRID_SIZE, DET_CUT, GUM_CUT, MIN_CELLS,
+        SHELL_THICKNESS_MM, OFFSET_MM, UNDERCUT_ANGLE_DEG, GINGIVA_MARGIN_MM
+    )
+except ImportError:
+    # Fallback defaults if config not available
+    GRID_SIZE = 240
+    DET_CUT = 0.5
+    GUM_CUT = 0.3
+    MIN_CELLS = 8
+    SHELL_THICKNESS_MM = 0.75
+    OFFSET_MM = 0.1
+    UNDERCUT_ANGLE_DEG = 45.0
+    GINGIVA_MARGIN_MM = 1.0
+
 UPPER_FDI = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28]
 LOWER_FDI = [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38]
 
@@ -85,7 +103,7 @@ def ai_suggest_cut_ratio(mesh, main_server_url=""):
 
 # ── Grid helpers ──────────────────────────────────────────────────────────
 
-def build_column_map(verts, grid_size=240):
+def build_column_map(verts, grid_size=GRID_SIZE):
     """Per-XY-cell column extents. Returns H_max, H_min, cell_verts, bounds."""
     xy = verts[:, :2]
     xmin, ymin = xy.min(axis=0)
@@ -121,8 +139,8 @@ def _centroid(cells, grid_size):
 
 # ── Morphological tooth detection ─────────────────────────────────────────
 
-def detect_teeth_morph(H_col, arch_type, det_cut=0.5, gum_cut=0.3,
-                       grid_size=240, min_cells=8):
+def detect_teeth_morph(H_col, arch_type, det_cut=DET_CUT, gum_cut=GUM_CUT,
+                       grid_size=GRID_SIZE, min_cells=MIN_CELLS):
     """
     Erosion-based tooth separation:
       - seed_region = cells above the DETECTION cut (high, excludes gum

@@ -18,6 +18,19 @@ import time
 from pathlib import Path
 from typing import Optional
 
+# Import pipeline parameters for consistency
+try:
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from ortho.aligner_pipeline.config.pipeline_params import (
+        SHELL_THICKNESS_MM, OFFSET_MM, UNDERCUT_ANGLE_DEG, GINGIVA_MARGIN_MM
+    )
+except ImportError:
+    # Fallback defaults
+    SHELL_THICKNESS_MM = 0.75
+    OFFSET_MM = 0.1
+    UNDERCUT_ANGLE_DEG = 45.0
+    GINGIVA_MARGIN_MM = 1.0
+
 
 def _find_blender() -> Optional[str]:
     """Locate Blender executable. Checks common paths."""
@@ -98,10 +111,10 @@ class BlenderRunner:
         tooth_numbers: list[int],
         positions: dict[int, dict],
         attachments: dict[int, list[dict]],
-        shell_thickness: float = 0.75,
-        offset_mm: float = 0.1,
-        undercut_angle: float = 45.0,
-        gingiva_margin: float = 1.0,
+        shell_thickness: float = SHELL_THICKNESS_MM,
+        offset_mm: float = OFFSET_MM,
+        undercut_angle: float = UNDERCUT_ANGLE_DEG,
+        gingiva_margin: float = GINGIVA_MARGIN_MM,
         attachments_enabled: bool = True,
         export_individual: bool = True,
         export_aligner: bool = True,
@@ -143,10 +156,10 @@ class BlenderRunner:
         tooth_numbers: list[int],
         positions: dict[int, dict],
         attachments: Optional[dict[int, list[dict]]] = None,
-        shell_thickness: float = 0.75,
-        offset_mm: float = 0.1,
-        undercut_angle: float = 45.0,
-        gingiva_margin: float = 1.0,
+        shell_thickness: float = SHELL_THICKNESS_MM,
+        offset_mm: float = OFFSET_MM,
+        undercut_angle: float = UNDERCUT_ANGLE_DEG,
+        gingiva_margin: float = GINGIVA_MARGIN_MM,
         attachments_enabled: bool = True,
         export_individual: bool = True,
         export_aligner: bool = True,
@@ -243,10 +256,10 @@ class BlenderRunner:
         tooth_numbers: list[int],
         staged_positions: list[dict[int, dict]],
         attachments: Optional[dict[int, list[dict]]] = None,
-        shell_thickness: float = 0.75,
-        offset_mm: float = 0.1,
-        undercut_angle: float = 45.0,
-        gingiva_margin: float = 1.0,
+        shell_thickness: float = SHELL_THICKNESS_MM,
+        offset_mm: float = OFFSET_MM,
+        undercut_angle: float = UNDERCUT_ANGLE_DEG,
+        gingiva_margin: float = GINGIVA_MARGIN_MM,
         attachments_enabled: bool = True,
         export_individual: bool = True,
         export_aligner: bool = True,

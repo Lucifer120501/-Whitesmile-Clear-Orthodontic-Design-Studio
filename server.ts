@@ -3618,6 +3618,266 @@ function createCompanyUserFolders(companyName: string, userName?: string): void 
   }
 }
 
+// ── LEAP Malocclusion Classification (Leading Enhancement Assistive Planning) ──
+// Replicates the published pipeline: 3D STL -> normalized voxel grid -> classifier
+// -> top-5 predictions with confidence -> rule-based combination logic.
+// 15 independent binary labels: 4 Angle main classes + 11 occlusal subclasses.
+const LEAP_MAIN_CLASSES = [
+  "Class I",
+  "Class II Division 1",
+  "Class II Division 2",
+  "Class III",
+];
+
+const LEAP_SUB_CLASSES = [
+  "Open Bite",
+  "Anterior Open Bite",
+  "Posterior Open Bite",
+  "Deep Bite",
+  "Cross Bite",
+  "Scissor Bite",
+  "Edge to Edge Bite",
+  "Spacing",
+  "Mild Crowding",
+  "Moderate Crowding",
+  "Severe Crowding",
+];
+
+const LEAP_ALL_LABELS: string[] = [...LEAP_MAIN_CLASSES, ...LEAP_SUB_CLASSES];
+const LEAP_VOXEL_RESOLUTION = 128; // 128x128x128 default voxel grid
+
+// Normalize free-form model output to one of the 15 canonical LEAP labels
+function normalizeLeapLabel(label: string): string | null {
+  if (typeof label !== "string") return null;
+  const s = label.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  for (const canon of LEAP_ALL_LABELS) {
+    const c = canon.toLowerCase();
+    if (s === c) return canon;
+  }
+  if (/class\s*(i|1)\b/.test(s) && !/div|division/.test(s) && !/ii|2|iii|3/.test(s)) return "Class I";
+  if (/class\s*ii\s*div(ision)?\s*1/.test(s) || /class\s*2\s*div(ision)?\s*1/.test(s)) return "Class II Division 1";
+  if (/class\s*ii\s*div(ision)?\s*2/.test(s) || /class\s*2\s*div(ision)?\s*2/.test(s)) return "Class II Division 2";
+  if (/^class\s*ii\b/.test(s) || /class\s*2\b/.test(s)) return "Class II Division 1";
+  if (/^class\s*iii\b/.test(s) || /class\s*3\b/.test(s)) return "Class III";
+  if (/anterior\s+open/.test(s)) return "Anterior Open Bite";
+  if (/posterior\s+open/.test(s)) return "Posterior Open Bite";
+  if (/open\s+bite/.test(s)) return "Open Bite";
+  if (/deep\s+bite|over\s*bite/.test(s)) return "Deep Bite";
+  if (/scissor|scissors/.test(s)) return "Scissor Bite";
+  if (/cross\s*bite/.test(s)) return "Cross Bite";
+  if (/edge\s*to\s*edge/.test(s)) return "Edge to Edge Bite";
+  if (/severe\s*crowd/.test(s)) return "Severe Crowding";
+  if (/moderate\s*crowd/.test(s)) return "Moderate Crowding";
+  if (/mild\s*crowd/.test(s)) return "Mild Crowding";
+  if (/crowd/.test(s)) return "Moderate Crowding";
+  if (/spac(e|ing)/.test(s)) return "Spacing";
+  return null;
+}
+
+// Rule-based combination logic (paper Fig. 7): check the sagittal (incisor)
+// relationship in the top predictions; if present, emit the main class plus all
+// valid pairwise main+subclass / subclass+subclass combinations. If absent,
+// report the subclasses only.
+function leapCombinePredictions(top5: Array<{ label: string; confidence: number }>): {
+  mainClass: string | null;
+  subclasses: string[];
+  combinations: string[];
+} {
+  const present = top5
+    .map((p) => ({ ...p, label: normalizeLeapLabel(p.label) || "" }))
+    .filter((p) => p.label && p.confidence > 0);
+  const main = present.find((p) => (LEAP_MAIN_CLASSES as string[]).includes(p.label)) || null;
+  const subs: string[] = [];
+  for (const p of present) {
+    if ((LEAP_SUB_CLASSES as string[]).includes(p.label) && !subs.includes(p.label)) subs.push(p.label);
+  }
+  const combinations: string[] = [];
+  if (main) {
+    combinations.push(main.label);
+    for (const s of subs) combinations.push(`${main.label} + ${s}`);
+    for (let i = 0; i < subs.length; i++) {
+      for (let j = i + 1; j < subs.length; j++) {
+        combinations.push(`${subs[i]} + ${subs[j]}`);
+      }
+    }
+  } else {
+    combinations.push(...subs);
+  }
+  return { mainClass: main ? main.label : null, subclasses: subs, combinations };
+}
+
+function buildLeapPrompt(opts: {
+  prescriptionText: string;
+  designSummary: string;
+  treatmentPlanText: string;
+  stlSummary: string;
+}): string {
+  return [
+    "You are the LEAP classification engine (Leading Enhancement Assistive Planning) for clear-aligner orthodontics.",
+    "Classify this case against exactly 15 independent binary labels (multilabel, not mutually exclusive):",
+    "MAIN SAGITTAL CLASSES (exactly one should dominate): " + LEAP_MAIN_CLASSES.join("; "),
+    "SUBCLASSES: " + LEAP_SUB_CLASSES.join("; "),
+    "",
+    'Return ONLY JSON in this exact shape:',
+    '{"predictions": [{"label": "<one of the 15 labels>", "confidence": 0.0-1.0} x 5 ranked by confidence],',
+    ' "clinical_summary": "<2-3 sentence diagnostic rationale>",',
+    ' "sequencing_note": "<one sentence on how this affects aligner staging>"}',
+    "",
+    "Rules: use the canonical label strings above verbatim. Rank the 5 most likely labels by confidence.",
+    "The first main-class label in your ranking is the primary sagittal relationship.",
+    "",
+    "CASE CONTEXT",
+    "PRESCRIPTION: " + (opts.prescriptionText || "(none provided)"),
+    "DESIGN PARAMETERS: " + (opts.designSummary || "(none)"),
+    "AI TREATMENT PLAN (already generated): " + (opts.treatmentPlanText || "(none)").substring(0, 4000),
+    "STL MESH METADATA: " + (opts.stlSummary || "(none)"),
+  ].join("\n");
+}
+
+// Mirror a case into the rigid multi-tenant directory structure from the
+// architecture notebook: [Clinic]/[Doctor]/Patients/[CASE]/stl + /treatment-plan
+function mirrorCaseToTenantStructure(caseRecord: any): void {
+  try {
+    const storage = loadSystemConfig();
+    const base = storage.storageFolder;
+    if (!base || !caseRecord) return;
+    const clinic = sanitizeFolderName(caseRecord.companyName || "_unassigned-clinic");
+    const doctor = sanitizeFolderName(caseRecord.ownerUsername || "_unknown-doctor");
+    const caseDir = path.join(base, clinic, doctor, "Patients", sanitizeFolderName(caseRecord.id || "CASE_UNKNOWN"));
+    const stlDir = path.join(caseDir, "stl");
+    const planDir = path.join(caseDir, "treatment-plan");
+    fs.mkdirSync(stlDir, { recursive: true });
+    fs.mkdirSync(planDir, { recursive: true });
+
+    for (const f of caseRecord.files || []) {
+      const isStl = String(f.name || "").toLowerCase().endsWith(".stl");
+      if (!isStl) continue;
+      let src = "";
+      if (f.localPath && fs.existsSync(f.localPath)) {
+        src = f.localPath;
+      } else if (f.url && String(f.url).startsWith("/uploads/")) {
+        const candidate = path.join(uploadsDir, path.basename(String(f.url)));
+        if (fs.existsSync(candidate)) src = candidate;
+      }
+      if (!src) continue;
+      const dest = path.join(stlDir, sanitizeFolderName(f.name));
+      try { fs.copyFileSync(src, dest); } catch (copyErr: any) {
+        console.warn("[Tenant Mirror] STL copy failed:", copyErr && copyErr.message);
+      }
+    }
+
+    const result = caseRecord.result;
+    if (result) {
+      try { fs.writeFileSync(path.join(planDir, "analysis.json"), JSON.stringify(result, null, 2), "utf-8"); } catch {}
+      if (result.treatment_plan) {
+        try { fs.writeFileSync(path.join(planDir, "treatment-plan.md"), result.treatment_plan, "utf-8"); } catch {}
+      }
+    }
+    if (caseRecord.leap) {
+      try { fs.writeFileSync(path.join(planDir, "leap-classification.json"), JSON.stringify(caseRecord.leap, null, 2), "utf-8"); } catch {}
+    }
+  } catch (err) {
+    console.warn("[Tenant Mirror] failed:", err);
+  }
+}
+
+// Run the LEAP classification stage for a case, persist it on the case record,
+// and mirror the artifacts into the tenant folder structure.
+async function runLeapForCase(caseId: string): Promise<any> {
+  const ai = getGeminiClient();
+  if (!ai) throw new Error("AI engine unavailable - add a valid API key in AI Manager.");
+
+  const history = readHistory();
+  const idx = history.findIndex((c: any) => c.id === caseId);
+  if (idx === -1) throw new Error("Case not found");
+  const caseRecord = history[idx];
+
+  const stlFiles = (caseRecord.files || []).filter((f: any) => String(f.name || "").toLowerCase().endsWith(".stl"));
+  const stlSummary = stlFiles.length > 0
+    ? stlFiles.map((f: any) => `${f.name} (${f.format || "STL"}, ${f.triangleCount || "?"} triangles, arch: ${f.archGuess || "?"})`).join(" | ")
+    : "(no STL scans attached)";
+
+  const dp = caseRecord.result && caseRecord.result.design_parameters;
+  const designSummary = dp
+    ? `appliance: ${dp.appliance || "?"}; arch: ${dp.arch || "?"}; material: ${dp.material || "?"}; trim line: ${dp.trim_line || "?"}`
+    : "(analysis pending)";
+
+  const prompt = buildLeapPrompt({
+    prescriptionText: caseRecord.prescriptionText || "",
+    designSummary,
+    treatmentPlanText: (caseRecord.result && caseRecord.result.treatment_plan) || "",
+    stlSummary,
+  });
+
+  const response = await generateContentWithRetry(ai, {
+    model: getAiModel(),
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    config: { temperature: 0.1, responseMimeType: "application/json" },
+    _requestType: "leap-classification",
+  });
+
+  const jsonText = (response.text || "").trim();
+  if (!jsonText) throw new Error("LEAP classifier returned an empty response");
+  let parsed: any;
+  try {
+    const cleaned = jsonText.replace(/^```json\s*/i, "").replace(/```\s*$/i, "");
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw new Error("LEAP classifier returned malformed JSON");
+  }
+
+  const rawPredictions: Array<{ label: string; confidence: number }> = Array.isArray(parsed.predictions)
+    ? parsed.predictions
+    : [];
+  const seen = new Set<string>();
+  const predictions = rawPredictions
+    .map((p) => ({
+      label: normalizeLeapLabel(p && p.label) || "",
+      confidence: Math.max(0, Math.min(1, Number(p && p.confidence) || 0)),
+    }))
+    .filter((p) => {
+      if (!p.label) return false;
+      if (seen.has(p.label)) return false;
+      seen.add(p.label);
+      return true;
+    })
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 5);
+  if (predictions.length === 0) throw new Error("LEAP classifier produced no usable labels");
+
+  const combined = leapCombinePredictions(predictions);
+  const totalTriangles = stlFiles.reduce((sum: number, f: any) => sum + (Number(f.triangleCount) || 0), 0);
+
+  const leap = {
+    version: 1,
+    system: "LEAP - Leading Enhancement Assistive Planning",
+    generatedAt: new Date().toISOString(),
+    mainClass: combined.mainClass,
+    subclasses: combined.subclasses,
+    combinations: combined.combinations,
+    predictions,
+    voxelization: {
+      resolution: LEAP_VOXEL_RESOLUTION,
+      grid: `${LEAP_VOXEL_RESOLUTION}x${LEAP_VOXEL_RESOLUTION}x${LEAP_VOXEL_RESOLUTION}`,
+      meshes: stlFiles.length,
+      triangles: totalTriangles,
+    },
+    clinicalSummary: String(parsed.clinical_summary || "").substring(0, 1200),
+    sequencingNote: String(parsed.sequencing_note || "").substring(0, 600),
+    status: "completed",
+  };
+
+  // Persist on the case record (top-level + inside result for API consumers)
+  history[idx].leap = leap;
+  if (history[idx].result) history[idx].result.leap = leap;
+  writeHistory(history);
+
+  // Mirror artifacts into the rigid tenant folder structure
+  mirrorCaseToTenantStructure(history[idx]);
+
+  return leap;
+}
+
 function saveSystemConfig(config: SystemConfig): boolean {
   try {
     fs.writeFileSync(SYSTEM_CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
@@ -4934,6 +5194,7 @@ const analyzeHandler = async (req: AuthedRequest, res: express.Response) => {
         size: f.size,
         mimeType: f.mimetype,
         url: `/uploads/${f.filename}`,
+        localPath: f.path,
         valid: stlInfo.valid,
         format: isStl ? stlInfo.format : "Attachment",
         archGuess: stlInfo.arch_guess,
@@ -5336,6 +5597,26 @@ Uploaded Local Files & Metadata: ${JSON.stringify(localFiles, null, 2)}
       writeHistory(currentHistory);
     }
 
+    // ── LEAP classification (post-treatment-plan stage) + rigid tenant mirror ──
+    // Notebook pipeline: STL -> AI treatment plan -> malocclusion classification
+    // (15 labels, top-5, rule-based combinations) -> artifacts mirrored to
+    // [Clinic]/[Doctor]/Patients/[CASE]/stl + /treatment-plan
+    try {
+      const leap = await runLeapForCase(newCaseId);
+      analysisResult.leap = leap;
+      // The same in-memory record was written by runLeapForCase; keep it consistent
+      const refreshed = readHistory();
+      const rIdx = refreshed.findIndex((item) => item.id === newCaseId);
+      if (rIdx !== -1) {
+        refreshed[rIdx].leap = leap;
+        if (refreshed[rIdx].result) refreshed[rIdx].result.leap = leap;
+        writeHistory(refreshed);
+      }
+    } catch (leapErr: any) {
+      console.error("[LEAP] classification failed:", leapErr && leapErr.message);
+      analysisResult.leap = { status: "failed", error: String((leapErr && leapErr.message) || leapErr) };
+    }
+
     // Attach antivirus scan results + uploaded file metadata (used by the
     // domino: the UI auto-triggers Agliner segmentation on the STLs).
     res.json({ ...analysisResult, antivirusScan: avScanResults, files: uploadedFilesMetadata });
@@ -5384,6 +5665,34 @@ const analyzeUpload = upload.fields([
 
 app.post("/analyze-case", requireAuth, requirePack("analysis"), analyzeUpload, analyzeHandler);
 app.post("/api/analyze-case", requireAuth, requirePack("analysis"), analyzeUpload, analyzeHandler);
+
+// POST /api/leap/classify — run/re-run the LEAP malocclusion classification
+// (15 labels: 4 sagittal main classes + 11 occlusal subclasses) for a case.
+app.post("/api/leap/classify", requireAuth, requirePack("analysis"), express.json(), async (req: AuthedRequest, res) => {
+  const { caseId } = req.body || {};
+  if (!caseId || typeof caseId !== "string") {
+    res.status(400).json({ error: "caseId is required." });
+    return;
+  }
+  const history = readHistory();
+  const caseData = history.find((item) => item.id === caseId);
+  if (!caseData) {
+    res.status(404).json({ error: "Case not found." });
+    return;
+  }
+  if (!canAccessCase(req.user!, req.company || null, caseData)) {
+    res.status(403).json({ error: "You do not have permission to classify this case." });
+    return;
+  }
+  try {
+    const leap = await runLeapForCase(caseId);
+    res.json({ success: true, leap });
+  } catch (err: any) {
+    const msg = (err && err.message) || "LEAP classification failed.";
+    const status = /API key|engine unavailable/i.test(msg) ? 503 : 500;
+    res.status(status).json({ error: msg });
+  }
+});
 
 // ── Knowledge Processing: Extract & Summarize Resources from Text+Links ──
 app.post("/api/knowledge/process-text", requireAdmin, express.json({ limit: '10mb' }), async (req, res) => {

@@ -54,6 +54,19 @@ import sys
 import time
 from pathlib import Path
 
+# Import pipeline parameters for consistency
+try:
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from ortho.aligner_pipeline.config.pipeline_params import SHELL_THICKNESS_MM, OFFSET_MM, UNDERCUT_ANGLE_DEG, GINGIVA_MARGIN_MM
+except ImportError:
+    try:
+        from ..config.pipeline_params import SHELL_THICKNESS_MM, OFFSET_MM, UNDERCUT_ANGLE_DEG, GINGIVA_MARGIN_MM
+    except ImportError:
+        SHELL_THICKNESS_MM = 0.75
+        OFFSET_MM = 0.1
+        UNDERCUT_ANGLE_DEG = 45.0
+        GINGIVA_MARGIN_MM = 1.0
+
 import bpy
 import bmesh
 from mathutils import Vector, Euler
@@ -303,7 +316,7 @@ def _apply_movement(obj: bpy.types.Object, pos: dict):
     obj.rotation_euler.rotate(euler)
 
 
-def _block_undercuts(obj: bpy.types.Object, angle_deg: float = 45.0):
+def _block_undercuts(obj: bpy.types.Object, angle_deg: float = UNDERCUT_ANGLE_DEG):
     """Remove faces steeper than angle_deg from +Z with robust hole filling."""
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.mode_set(mode="EDIT")
@@ -481,9 +494,9 @@ def run_batch(config: dict):
     output_dir = config["output_dir"]
     tooth_numbers = [t for t in config["tooth_numbers"] if t != 0]
     stages_cfg = config["stages"]
-    shell_thickness = config.get("shell_thickness", 0.75)
-    offset_mm = config.get("offset_mm", 0.1)
-    undercut_angle = config.get("undercut_angle", 45.0)
+    shell_thickness = config.get("shell_thickness", SHELL_THICKNESS_MM)
+    offset_mm = config.get("offset_mm", OFFSET_MM)
+    undercut_angle = config.get("undercut_angle", UNDERCUT_ANGLE_DEG)
     attachments_enabled = config.get("attachments_enabled", True)
     attachments_cfg = config.get("attachments", {})
     
