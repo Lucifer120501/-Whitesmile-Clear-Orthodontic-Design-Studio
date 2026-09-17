@@ -1,0 +1,16 @@
+# Clear Aligner Pipeline — Dependencies
+# Install: uv pip install -r requirements.txt (inside .venv)
+#
+# Note: Blender includes its own Python. The blender/*_cad.py scripts
+#       run INSIDE Blender and only need Blender's built-in modules.
+
+fastapi>=0.100
+uvicorn[standard]>=0.20
+websockets>=12.0
+trimesh>=4.0
+numpy>=1.21
+
+# ── AI note ──────────────────────────────────────────────────────────────
+# All AI (staging plans) is delegated to the WhiteSmile MAIN SYSTEM via
+# POST /api/ai/staging-plan — no provider SDKs or API keys are needed here.
+# The main system is the single AI brain (see the AI Manager tab there).

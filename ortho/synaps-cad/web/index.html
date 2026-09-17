@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#181824" />
+    <title>SynapsCAD</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23181824'/%3E%3Cpath d='M18 22 32 14l14 8v20l-14 8-14-8z' fill='none' stroke='%2364a0ff' stroke-width='4' stroke-linejoin='round'/%3E%3Cpath d='M18 22l14 8 14-8M32 30v20' fill='none' stroke='%23dcdce6' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #181824;
+      }
+
+      #synaps-cad {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        touch-action: none;
+      }
+
+      .boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #dcdce6;
+        font: 16px system-ui, sans-serif;
+        background: #181824;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="synaps-cad"></canvas>
+    <div class="boot" id="boot">Loading SynapsCAD...</div>
+    <script type="module">
+      import init from "./pkg/synaps_cad.js";
+
+      const boot = document.getElementById("boot");
+      const isControlFlowException = (error) =>
+        String(error?.message ?? error).includes("Using exceptions for control flow");
+
+      try {
+        await init();
+        boot.remove();
+      } catch (error) {
+        if (isControlFlowException(error)) {
+          boot.remove();
+          throw error;
+        }
+        console.error(error);
+        boot.textContent = "Failed to load SynapsCAD. Check the browser console for details.";
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "c_c9f427bc5f32",
+    "name": "test company 1",
+    "enabledPacks": [
+      "analysis",
+      "ortho",
+      "blender",
+      "agliner"
+    ],
+    "syncEnabled": true,
+    "createdAt": "2026-08-17T09:56:20.464Z"
+  },
+  {
+    "id": "c_4af6c831a5c1",
+    "name": "company A",
+    "enabledPacks": [
+      "analysis",
+      "ortho",
+      "blender",
+      "agliner"
+    ],
+    "syncEnabled": true,
+    "createdAt": "2026-08-19T09:01:14.267Z"
+  },
+  {
+    "id": "c_182395707147",
+    "name": "Farhans dental",
+    "enabledPacks": [
+      "analysis",
+      "ortho",
+      "agliner",
+      "blender"
+    ],
+    "syncEnabled": true,
+    "createdAt": "2026-08-22T03:08:49.705Z"
+  },
+  {
+    "id": "c_5823efb9c469",
+    "name": "Ramu Dental Clinic",
+    "enabledPacks": [
+      "analysis",
+      "blender",
+      "agliner",
+      "ortho"
+    ],
+    "syncEnabled": false,
+    "createdAt": "2026-08-22T03:09:20.441Z"
+  }
+]

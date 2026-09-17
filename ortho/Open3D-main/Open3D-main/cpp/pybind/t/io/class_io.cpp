@@ -1,0 +1,364 @@
+// ----------------------------------------------------------------------------
+// -                        Open3D: www.open3d.org                            -
+// ----------------------------------------------------------------------------
+// Copyright (c) 2018-2024 www.open3d.org
+// SPDX-License-Identifier: MIT
+// ----------------------------------------------------------------------------
+
+#include <filesystem>
+#include <string>
+#include <unordered_map>
+namespace fs = std::filesystem;
+
+#include "open3d/t/geometry/PointCloud.h"
+#include "open3d/t/io/ImageIO.h"
+#include "open3d/t/io/PointCloudIO.h"
+#include "open3d/t/io/TriangleMeshIO.h"
+#include "pybind/docstring.h"
+#include "pybind/t/io/io.h"
+
+namespace open3d {
+namespace t {
+namespace io {
+
+// IO functions have similar arguments, thus the arg docstrings may be shared
+static const std::unordered_map<std::string, std::string>
+        map_shared_argument_docstrings = {
+                {"filename", "Path to file."},
+                // Write options
+                {"compressed",
+                 "Set to ``True`` to write in compressed format."},
+                {"format",
+                 "The format of the input file. When not specified or set as "
+                 "``auto``, the format is inferred from file extension name."},
+                {"remove_nan_points",
+                 "If true, all points that include a NaN are removed from "
+                 "the PointCloud."},
+                {"remove_infinite_points",
+                 "If true, all points that include an infinite value are "
+                 "removed from the PointCloud."},
+                {"quality", "Quality of the output file."},
+                {"write_ascii",
+                 "Set to ``True`` to output in ascii format, otherwise binary "
+                 "format will be used."},
+                {"write_vertex_normals",
+                 "Set to ``False`` to not write any vertex normals, even if "
+                 "present on the mesh."},
+                {"write_vertex_colors",
+                 "Set to ``False`` to not write any vertex colors, even if "
+                 "present on the mesh."},
+                {"write_triangle_uvs",
+                 "Set to ``False`` to not write any triangle uvs, even if "
+                 "present on the mesh. For ``obj`` format, mtl file is saved "
+                 "only when ``True`` is set."},
+                // Entities
+                {"config", "AzureKinectSensor's config file."},
+                {"pointcloud", "The ``PointCloud`` object for I/O."},
+                {"mesh", "The ``TriangleMesh`` object for I/O."},
+                {"line_set", "The ``LineSet`` object for I/O."},
+                {"image", "The ``Image`` object for I/O."},
+                {"voxel_grid", "The ``VoxelGrid`` object for I/O."},
+                {"trajectory",
+                 "The ``PinholeCameraTrajectory`` object for I/O."},
+                {"intrinsic", "The ``PinholeCameraIntrinsic`` object for I/O."},
+                {"parameters",
+                 "The ``PinholeCameraParameters`` object for I/O."},
+                {"pose_graph", "The ``PoseGraph`` object for I/O."},
+                {"feature", "The ``Feature`` object for I/O."},
+                {"print_progress",
+                 "If set to true a progress bar is visualized in the console."},
+                {"gaussian_splat_antialias",
+                 "For SPZ writes, set the file header antialiased flag (mip-"
+                 "splat density compensation). Ignored by other formats. "
+                 "Matches MaterialRecord.gaussian_splat_antialias when "
+                 "rendering."},
+};
+
+void pybind_class_io_declarations(py::module &m_io) {
+    py::class_<DepthNoiseSimulator> depth_noise_simulator(
+            m_io, "DepthNoiseSimulator",
+            R"(Simulate depth image noise from a given noise distortion model. The distortion model is based on *Teichman et. al. "Unsupervised intrinsic calibration of depth sensors via SLAM" RSS 2009*. Also see <http://redwood-data.org/indoor/dataset.html>__
+
+Example::
+
+    import open3d as o3d
+
+    # Redwood Indoor LivingRoom1 (Augmented ICL-NUIM)
+    # http://redwood-data.org/indoor/
+    data = o3d.data.RedwoodIndoorLivingRoom1()
+    noise_model_path = data.noise_model_path
+    im_src_path = data.depth_paths[0]
+    depth_scale = 1000.0
+
+    # Read clean depth image (uint16)
+    im_src = o3d.t.io.read_image(im_src_path)
+
+    # Run noise model simulation
+    simulator = o3d.t.io.DepthNoiseSimulator(noise_model_path)
+    im_dst = simulator.simulate(im_src, depth_scale=depth_scale)
+
+    # Save noisy depth image (uint16)
+    o3d.t.io.write_image("noisy_depth.png", im_dst)
+            )");
+}
+
+void pybind_class_io_definitions(py::module &m_io) {
+    // open3d::t::geometry::Image
+    m_io.def(
+            "read_image",
+            [](const fs::path &filename) {
+                py::gil_scoped_release release;
+                geometry::Image image;
+                ReadImage(filename.string(), image);
+                return image;
+            },
+            "Function to read image from file.", "filename"_a);
+    docstring::FunctionDocInject(m_io, "read_image",
+                                 map_shared_argument_docstrings);
+
+    m_io.def(
+            "write_image",
+            [](const fs::path &filename, const geometry::Image &image,
+               int quality) {
+                py::gil_scoped_release release;
+                return WriteImage(filename.string(), image, quality);
+            },
+            "Function to write Image to file.", "filename"_a, "image"_a,
+            "quality"_a = kOpen3DImageIODefaultQuality);
+    docstring::FunctionDocInject(m_io, "write_image",
+                                 map_shared_argument_docstrings);
+
+    // open3d::t::geometry::PointCloud
+    m_io.def(
+            "read_point_cloud",
+            [](const fs::path &filename, const std::string &format,
+               bool remove_nan_points, bool remove_infinite_points,
+               bool print_progress) {
+                py::gil_scoped_release release;
+                t::geometry::PointCloud pcd;
+                ReadPointCloud(filename.string(), pcd,
+                               {format, remove_nan_points,
+                                remove_infinite_points, print_progress});
+                return pcd;
+            },
+            R"(Read a tensor :class:`open3d.t.geometry.PointCloud` from file.
+
+For 3D Gaussian splat data (``.ply`` / ``.splat`` / ``.spz`` with the usual
+attributes):
+
+- **In-memory ``scale``** on the returned point cloud is always **linear** (axis
+  lengths), which matches the Filament / rendering path.
+- **PLY** files follow the common convention of storing **log-scale** per axis;
+  the reader applies ``exp`` so the tensor attribute ``scale`` is linear.
+- **SPLAT** files store **linear** scales already; no conversion is applied.
+- **SPZ** files are compressed and use log-scale and xyzw quaternion storage;
+  the reader converts them to Open3D's linear-scale and wxyz representation.
+
+When writing PLY from a Gaussian splat cloud, ``write_point_cloud`` converts
+``scale`` back to log-space for the same file convention.)",
+            "filename"_a, "format"_a = "auto", "remove_nan_points"_a = false,
+            "remove_infinite_points"_a = false, "print_progress"_a = false);
+    docstring::FunctionDocInject(m_io, "read_point_cloud",
+                                 map_shared_argument_docstrings);
+
+    m_io.def(
+            "write_point_cloud",
+            [](const fs::path &filename,
+               const t::geometry::PointCloud &pointcloud, bool write_ascii,
+               bool compressed, bool print_progress,
+               bool gaussian_splat_antialias) {
+                py::gil_scoped_release release;
+                open3d::io::WritePointCloudOption params{
+                        write_ascii, compressed, print_progress};
+                params.gaussian_splat_antialias = gaussian_splat_antialias;
+                return WritePointCloud(filename.string(), pointcloud, params);
+            },
+            R"(Write a tensor :class:`open3d.t.geometry.PointCloud` to file.
+
+For Gaussian splat clouds written as **PLY**, per-point ``scale`` is converted
+from the in-memory **linear** representation to **log-scale** in the file, matching
+common 3DGS PLY conventions (see :meth:`read_point_cloud`). SPLAT output writes
+linear scales directly. SPZ output uses compressed log-scale and xyzw quaternion
+storage while preserving the full spherical-harmonics data. Pass
+``gaussian_splat_antialias=True`` when writing SPZ to set the file header
+antialiased flag.)",
+            "filename"_a, "pointcloud"_a, "write_ascii"_a = false,
+            "compressed"_a = false, "print_progress"_a = false,
+            "gaussian_splat_antialias"_a = false);
+    docstring::FunctionDocInject(m_io, "write_point_cloud",
+                                 map_shared_argument_docstrings);
+
+    // open3d::geometry::TriangleMesh
+    m_io.def(
+            "read_triangle_mesh",
+            [](const fs::path &filename, bool enable_post_processing,
+               bool print_progress) {
+                py::gil_scoped_release release;
+                t::geometry::TriangleMesh mesh;
+                open3d::io::ReadTriangleMeshOptions opt;
+                opt.enable_post_processing = enable_post_processing;
+                opt.print_progress = print_progress;
+                ReadTriangleMesh(filename.string(), mesh, opt);
+                return mesh;
+            },
+            "Function to read TriangleMesh from file", "filename"_a,
+            "enable_post_processing"_a = false, "print_progress"_a = false,
+            R"doc(Read a TriangleMesh from a file.
+
+The format is inferred from the file extension.
+
+Supported formats:
+
+- ``ply`` -- native Open3D reader (geometry + colors/normals).
+- ``npz`` -- Open3D NPZ format (full round-trip including materials and
+  texture maps).
+- ``obj``, ``stl``, ``off``, ``gltf``, ``glb``, ``fbx`` -- via ASSIMP
+  (geometry; optional vertex normals/colors, UVs, and material/PBR data
+  depending on format, e.g. STL is geometry-only).
+
+The following example reads a triangle mesh with the .ply extension::
+
+    import open3d as o3d
+    mesh = o3d.t.io.read_triangle_mesh('mesh.ply')
+
+Args:
+    filename (str): Path to the mesh file.
+    enable_post_processing (bool): If True enables post-processing for
+        ASSIMP-read formats. Post-processing will
+
+          - triangulate meshes with polygonal faces
+          - remove redundant materials
+          - pretransform vertices
+          - generate face normals if needed
+
+        For more information see ASSIMP's documentation on the flags
+        ``aiProcessPreset_TargetRealtime_Fast``,
+        ``aiProcess_RemoveRedundantMaterials``,
+        ``aiProcess_OptimizeMeshes``, ``aiProcess_PreTransformVertices``.
+
+        Note that identical vertices will always be joined regardless of
+        whether post-processing is enabled or not, which changes the number
+        of vertices in the mesh. The ``ply`` format is not affected by
+        post-processing.
+
+    print_progress (bool): If True print the reading progress to the
+        terminal.
+
+Returns:
+    Returns the mesh object. On failure an empty mesh is returned.
+)doc");
+
+    m_io.def(
+            "write_triangle_mesh",
+            [](const fs::path &filename, const t::geometry::TriangleMesh &mesh,
+               bool write_ascii, bool compressed, bool write_vertex_normals,
+               bool write_vertex_colors, bool write_triangle_uvs,
+               bool print_progress) {
+                py::gil_scoped_release release;
+                return WriteTriangleMesh(filename.string(), mesh, write_ascii,
+                                         compressed, write_vertex_normals,
+                                         write_vertex_colors,
+                                         write_triangle_uvs, print_progress);
+            },
+            "Function to write TriangleMesh to file", "filename"_a, "mesh"_a,
+            "write_ascii"_a = false, "compressed"_a = false,
+            "write_vertex_normals"_a = true, "write_vertex_colors"_a = true,
+            "write_triangle_uvs"_a = true, "print_progress"_a = false,
+            R"doc(Write a TriangleMesh to a file.
+
+The format is inferred from the file extension.
+
+Supported formats and material/texture export:
+
+- ``npz`` -- full round-trip (geometry + material + all texture maps).
+- ``glb``  -- via ASSIMP; full PBR single material with embedded textures.
+- ``gltf`` -- via ASSIMP; full PBR single material with external textures.
+- ``obj``  -- via ASSIMP; single material exported; texture maps written as
+  external PNG sidecars (``<stem>_albedo.png``, ``<stem>_normal.png``,
+  ``<stem>_roughness.png``, ``<stem>_metallic.png``,
+  ``<stem>_ambient_occlusion.png``, ``<stem>_ao_rough_metal.png``).
+- ``fbx``  -- via ASSIMP; best-effort geometry export; texture maps may not
+  be reliably written by the ASSIMP FBX exporter.
+- ``stl``  -- via ASSIMP; geometry only (positions, faces, normals);
+  materials, UV coordinates, and vertex colors are not supported by STL.
+- ``ply``, ``off`` -- via legacy Open3D writer; geometry + colors/normals
+  only; materials and UV coordinates are not exported.
+
+Only a single material per mesh is supported. Multiple materials,
+``triangle_material_ids``, per-triangle normals, and animation are not
+supported.
+
+Example: write an OBJ with a textured material::
+
+    import open3d as o3d
+    import numpy as np
+
+    mesh = o3d.t.geometry.TriangleMesh.create_box()
+    mesh.material.set_default_properties()
+    albedo = o3d.t.geometry.Image(
+        np.random.randint(0, 256, (256, 256, 3), dtype=np.uint8))
+    mesh.material.texture_maps['albedo'] = albedo
+    o3d.t.io.write_triangle_mesh('/tmp/box.obj', mesh)
+
+Args:
+    filename (str): Path to the output file.
+    mesh (open3d.t.geometry.TriangleMesh): The mesh to write.
+    write_ascii (bool): If True, write in ASCII format where supported.
+        Not supported for glb or gltf.
+    compressed (bool): Reserved; not used by current writers.
+    write_vertex_normals (bool): If True, write vertex normals when present.
+    write_vertex_colors (bool): If True, write vertex colors when present
+        (not supported by STL).
+    write_triangle_uvs (bool): If True, write UV coordinates and associated
+        texture maps (not supported by STL or ply/off).
+    print_progress (bool): If True print the writing progress to the
+        terminal.
+
+Returns:
+    True on success, False on failure.
+)doc");
+    docstring::FunctionDocInject(m_io, "write_triangle_mesh",
+                                 map_shared_argument_docstrings);
+
+    // DepthNoiseSimulator
+    auto depth_noise_simulator = static_cast<py::class_<DepthNoiseSimulator>>(
+            m_io.attr("DepthNoiseSimulator"));
+    depth_noise_simulator.def(py::init([](const fs::path &fielname) {
+                                  return DepthNoiseSimulator(fielname.string());
+                              }),
+                              "noise_model_path"_a);
+    depth_noise_simulator.def("simulate", &DepthNoiseSimulator::Simulate,
+                              "im_src"_a, "depth_scale"_a = 1000.0f,
+                              "Apply noise model to a depth image.");
+    depth_noise_simulator.def(
+            "enable_deterministic_debug_mode",
+            &DepthNoiseSimulator::EnableDeterministicDebugMode,
+            "Enable deterministic debug mode. All normally distributed noise "
+            "will be replaced by 0.");
+    depth_noise_simulator.def_property_readonly(
+            "noise_model", &DepthNoiseSimulator::GetNoiseModel,
+            "The noise model tensor.");
+    docstring::ClassMethodDocInject(
+            m_io, "DepthNoiseSimulator", "__init__",
+            {{"noise_model_path",
+              "Path to the noise model file. See "
+              "http://redwood-data.org/indoor/dataset.html for the format. Or, "
+              "you may use one of our example datasets, e.g., "
+              "RedwoodIndoorLivingRoom1."}});
+    docstring::ClassMethodDocInject(
+            m_io, "DepthNoiseSimulator", "simulate",
+            {{"im_src",
+              "Source depth image, must be with dtype UInt16 or Float32, "
+              "channels==1."},
+             {"depth_scale",
+              "Scale factor to the depth image. As a sanity check, if the "
+              "dtype is Float32, the depth_scale must be 1.0. If the dtype is "
+              "is UInt16, the depth_scale is typically larger than 1.0, e.g. "
+              "it can be 1000.0."}});
+    docstring::ClassMethodDocInject(m_io, "DepthNoiseSimulator",
+                                    "enable_deterministic_debug_mode");
+}
+
+}  // namespace io
+}  // namespace t
+}  // namespace open3d

@@ -1,0 +1,8 @@
+/.claude/
+/target/
+/dist/
+/var/
+
+/TODO.md
+
+.DS_Store

@@ -1,0 +1,273 @@
+# open3d_set_open3d_lib_properties() sets properties for the Open3D lib itself.
+# This should be used for all object libraries that make up the Open3D lib.
+#
+# In comparison, open3d_set_global_properties() sets properties for the Open3D
+# lib, and targets that links to the Open3D lib, e.g pybind, unit tests, etc.
+function(open3d_set_open3d_lib_properties target)
+    cmake_parse_arguments(arg "HIDDEN" "" "" ${ARGN})
+    set_target_properties(${target} PROPERTIES
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${OPEN3D_ABI_VERSION}
+    )
+    if(NOT BUILD_SHARED_LIBS)
+        target_compile_definitions(${target} PUBLIC OPEN3D_STATIC)
+    endif()
+    if (arg_HIDDEN)
+        set_target_properties(${target} PROPERTIES
+                        CXX_VISIBILITY_PRESET hidden
+                        VISIBILITY_INLINES_HIDDEN ON
+                        )
+    else ()
+        target_compile_definitions(${target} PRIVATE OPEN3D_ENABLE_DLL_EXPORTS)
+    endif()
+
+    # Hide all 3rd party symbols, e.g. from header libraries.
+    get_target_property(TARGET_TYPE ${target} TYPE)
+    if (TARGET_TYPE STREQUAL SHARED_LIBRARY)
+        if (APPLE)
+            file(GENERATE OUTPUT libOpen3D.map CONTENT
+                [=[*open3d*
+*Open3D*
+]=])
+            target_link_options(${target} PRIVATE $<$<CONFIG:Release>:
+                -Wl,-exported_symbols_list
+                "${CMAKE_CURRENT_BINARY_DIR}/libOpen3D.map" >)
+        elseif (UNIX)   # Linux
+            file(GENERATE OUTPUT libOpen3D.map CONTENT
+                [=[{
+    global:
+        *open3d*;
+        extern "C++" {
+            open3d::*;
+        };
+    local: *;
+};]=])
+            target_link_options(${target} PRIVATE $<$<CONFIG:Release>:
+                "-Wl,--version-script=${CMAKE_CURRENT_BINARY_DIR}/libOpen3D.map" >)
+        elseif (WIN32)
+            # TODO(Sameer): Only export open3d symbols
+        endif()
+    endif()
+endfunction()
+
+# Configure a header file to pass the version settings to the source code
+configure_file("${PROJECT_SOURCE_DIR}/cpp/open3d/Open3D.h.in"
+               "${PROJECT_SOURCE_DIR}/cpp/open3d/Open3D.h")
+configure_file("${PROJECT_SOURCE_DIR}/cpp/open3d/Open3DConfig.h.in"
+               "${PROJECT_SOURCE_DIR}/cpp/open3d/Open3DConfig.h")
+
+
+if(ENABLE_SANITIZER)
+    message(STATUS "Enabling sanitizer: ${ENABLE_SANITIZER}")
+    if(MSVC)
+        add_compile_options(/fsanitize=${ENABLE_SANITIZER})
+        add_link_options(/fsanitize=${ENABLE_SANITIZER})
+    else()
+        add_compile_options(-fsanitize=${ENABLE_SANITIZER} -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=${ENABLE_SANITIZER})
+    endif()
+endif()
+
+add_library(Open3D)
+
+add_subdirectory(camera)
+add_subdirectory(core)
+add_subdirectory(data)
+add_subdirectory(geometry)
+add_subdirectory(io)
+add_subdirectory(ml)
+add_subdirectory(pipelines)
+add_subdirectory(t/geometry)
+add_subdirectory(t/io)
+add_subdirectory(t/pipelines)
+add_subdirectory(utility)
+add_subdirectory(visualization)
+
+if (BUILD_GUI)
+    add_subdirectory(visualization/gui)
+endif()
+
+if (BUILD_WEBRTC)
+    add_subdirectory(visualization/webrtc_server)
+endif()
+
+# note: adding at least one real source file to any target that references
+# reference: https://cmake.org/cmake/help/v3.12/command/add_library.html#object-libraries
+target_sources(Open3D PRIVATE
+    Open3DConfig.cpp
+)
+
+open3d_ispc_target_sources_TARGET_OBJECTS(Open3D PRIVATE
+    camera
+    core
+    core_impl
+    data
+    geometry
+    tgeometry
+    tgeometry_kernel
+    io
+    tio
+    ml_contrib
+    pipelines
+    tpipelines
+    tpipelines_kernel
+    utility
+    visualization
+    visualization_impl
+)
+
+if (BUILD_GUI)
+    open3d_ispc_target_sources_TARGET_OBJECTS(Open3D PRIVATE
+        GUI
+    )
+endif()
+
+if (BUILD_WEBRTC)
+    open3d_ispc_target_sources_TARGET_OBJECTS(Open3D PRIVATE
+        webrtc_server
+    )
+endif()
+
+# Source group for Visual Studio
+add_source_group(camera)
+add_source_group(core)
+add_source_group(data)
+add_source_group(geometry)
+add_source_group(tgeometry)
+add_source_group(io)
+add_source_group(tio)
+add_source_group(ml)
+add_source_group(pipelines)
+add_source_group(tpipelines)
+add_source_group(utility)
+add_source_group(visualization)
+
+open3d_show_and_abort_on_warning(Open3D)
+open3d_set_global_properties(Open3D)
+open3d_set_open3d_lib_properties(Open3D)
+open3d_link_3rdparty_libraries(Open3D)
+
+if (BUILD_SYCL_MODULE)
+    # parallel linking to speed up SYCL link time code generation
+    cmake_host_system_information(RESULT NUM_CORES QUERY NUMBER_OF_PHYSICAL_CORES)
+    target_link_options(Open3D PRIVATE -fsycl-max-parallel-link-jobs=${NUM_CORES})
+endif()
+# Switch linker to lld for clang and gcc, if lld is available
+if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    find_program(LLD_PROGRAM lld)
+    if (LLD_PROGRAM)
+        target_link_options(Open3D PRIVATE -fuse-ld=lld)
+    endif()
+endif()
+if (BUILD_SYCL_MODULE AND NOT BUILD_SHARED_LIBS)
+    # Static libraries do not perform the SYCL device link step themselves.
+    # Propagate the SYCL link target so final executables link with -fsycl and
+    # bundle device images from Open3D object files.
+    target_link_libraries(Open3D INTERFACE Open3D::3rdparty_sycl)
+    target_link_options(Open3D INTERFACE
+        $<$<AND:$<CXX_COMPILER_ID:IntelLLVM>,$<NOT:$<LINK_LANGUAGE:ISPC>>>:-fsycl -fsycl-targets=${OPEN3D_SYCL_TARGETS}>)
+    if (OPEN3D_SYCL_TARGET_BACKEND_OPTIONS)
+        target_link_options(Open3D INTERFACE
+            $<$<AND:$<CXX_COMPILER_ID:IntelLLVM>,$<NOT:$<LINK_LANGUAGE:ISPC>>>:-Xs ${OPEN3D_SYCL_TARGET_BACKEND_OPTIONS}>)
+    endif()
+endif()
+
+# GLX: All rendering, since GaussianSplatting interop with filament requires it.
+# Vulkan: GS compute.
+# EGL: Legacy offscreen rendering.
+if (NOT APPLE)
+    if (UNIX AND NOT APPLE)
+        find_package(OpenGL COMPONENTS EGL REQUIRED)
+    else()
+        find_package(OpenGL COMPONENTS EGL)
+    endif()
+    if (OpenGL_EGL_FOUND)
+        target_link_libraries(Open3D PRIVATE OpenGL::EGL)
+    endif()
+    find_package(X11 QUIET)
+    if (X11_FOUND)
+        target_link_libraries(Open3D PRIVATE X11::X11)
+    endif()
+endif()
+
+# If we are building a STATIC_LIBRARY, hide symbols coming from 3rd party static
+# libraries that are not hidden during compilation. Don't propagate beyond
+# direct consumers of libOpen3D.a
+target_link_options(Open3D INTERFACE
+    $<$<STREQUAL:$<TARGET_PROPERTY:Open3D,TYPE>,STATIC_LIBRARY>:$<LINK_ONLY:${OPEN3D_HIDDEN_3RDPARTY_LINK_OPTIONS}>>)
+
+add_library(Open3D::Open3D ALIAS Open3D)
+
+include(CMakePackageConfigHelpers)
+
+# find_package Open3D
+configure_package_config_file(Open3DConfig.cmake.in
+                              "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/Open3DConfig.cmake"
+                              INSTALL_DESTINATION ${Open3D_INSTALL_CMAKE_DIR}
+                              PATH_VARS Open3D_INSTALL_INCLUDE_DIR
+                              NO_CHECK_REQUIRED_COMPONENTS_MACRO
+)
+
+# find_package Open3D Version
+write_basic_package_version_file("${PROJECT_BINARY_DIR}/Open3DConfigVersion.cmake"
+                                 VERSION ${PROJECT_VERSION}
+                                 COMPATIBILITY ExactVersion)
+
+# Installation
+install(TARGETS Open3D EXPORT Open3DTargets
+        RUNTIME DESTINATION ${Open3D_INSTALL_BIN_DIR}
+        LIBRARY DESTINATION ${Open3D_INSTALL_LIB_DIR}
+        ARCHIVE DESTINATION ${Open3D_INSTALL_LIB_DIR}
+)
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DESTINATION ${Open3D_INSTALL_INCLUDE_DIR}
+    FILES_MATCHING
+        PATTERN "*.h"
+        PATTERN "*.cuh"
+)
+
+# Install the Open3DConfig.cmake and Open3DConfigVersion.cmake
+install(FILES
+        "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/Open3DConfig.cmake"
+        "${PROJECT_BINARY_DIR}/Open3DConfigVersion.cmake"
+        DESTINATION "${Open3D_INSTALL_CMAKE_DIR}" COMPONENT dev)
+
+# Install GUI resources
+if (BUILD_GUI)
+    install(DIRECTORY ${GUI_RESOURCE_DIR}
+         DESTINATION "${Open3D_INSTALL_RESOURCE_DIR}")
+endif()
+
+if (BUILD_SHARED_LIBS AND UNIX)
+    file(CONFIGURE OUTPUT Open3D.pc.in
+         CONTENT [=[
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include/
+
+Name: Open3D
+Description: @PROJECT_DESCRIPTION@
+URL: @PROJECT_HOMEPAGE_URL@
+Version: @PROJECT_VERSION@
+Cflags: -std=c++@CMAKE_CXX_STANDARD@ -isystem${includedir} -isystem${includedir}/open3d/3rdparty -D$<JOIN:$<TARGET_PROPERTY:INTERFACE_COMPILE_DEFINITIONS>, -D>
+Libs: -L${libdir} -Wl,-rpath,${libdir} -lOpen3D -ltbb]=]  @ONLY NEWLINE_STYLE LF)
+    file(GENERATE OUTPUT Open3D.pc INPUT "${CMAKE_CURRENT_BINARY_DIR}/Open3D.pc.in"
+        TARGET "Open3D::Open3D")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/Open3D.pc"
+        DESTINATION "${Open3D_INSTALL_LIB_DIR}/pkgconfig")
+endif ()
+
+# uninstall target
+if(NOT TARGET uninstall)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake_uninstall.cmake.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+                   IMMEDIATE @ONLY)
+
+    add_custom_target(uninstall COMMAND ${CMAKE_COMMAND} -P
+                      ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
+endif()
+
+# Export GUI_RESOURCE_FILES to parent CMake context (cpp/open3d/)
+set(GUI_RESOURCE_FILES ${GUI_RESOURCE_FILES} PARENT_SCOPE)
+set(GUI_RESOURCE_DIR ${GUI_RESOURCE_DIR} PARENT_SCOPE)

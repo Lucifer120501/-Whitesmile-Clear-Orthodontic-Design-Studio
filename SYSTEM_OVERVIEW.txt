@@ -1,0 +1,77 @@
+==============================================================================
+WHITESMILE CLEAR - SYSTEM OVERVIEW
+==============================================================================
+
+System Name: Whitesmile Clear Orthodontic CAD & Design Studio
+Version: Multi-User Server Edition (2026)
+Location: L:\New folder\beta
+
+------------------------------------------------------------------------------
+1. SYSTEM SUMMARY
+------------------------------------------------------------------------------
+Whitesmile Clear is an automated, web-based orthodontic design and clear aligner 
+production studio. It combines a React/TypeScript web front-end with a 
+Node.js server and Python/Blender CAD pipelines to process 3D dental models 
+(STL files), generate staging plans, automate aligner shell creation, and 
+manage orthodontic case histories across multiple dental practices.
+
+------------------------------------------------------------------------------
+2. CORE ARCHITECTURE & COMPONENTS
+------------------------------------------------------------------------------
+
+A. WEB FRONTEND (React + Vite + Tailwind CSS)
+   - Built with React, TypeScript, and Three.js for 3D viewport rendering.
+   - Entry point: src/main.tsx, src/App.tsx
+   - Key Modules:
+     * Workstation / 3D Viewer: Interactive viewport for inspecting 3D teeth models.
+     * Case History & Sync: Track case submissions, metadata, and production outputs.
+     * Systems Hub: Integrated modules for Ortho Staging, Blender Render, and Agliner Segmentation.
+     * Admin Panel: Multi-tenant management for users, companies, feature packs, and system updates.
+     * AI Manager & Storage: Configure AI providers/keys and manage company file storage.
+
+B. BACKEND SERVER (Node.js + Express)
+   - File: server.ts
+   - Features: Multi-tenant REST API, static file hosting, data isolation by company,
+     remote update orchestration (git pull + build + restart), and local file sync.
+   - Storage directory: server-data/ (users.json, companies.json, sessions.json).
+
+C. AUTHENTICATION & MULTI-TENANCY
+   - Scrypt password hashing with 32-byte session tokens.
+   - Company-level data isolation (each case is stamped with owner and company ID).
+   - Modular Feature Packs enabled per company:
+     1) "analysis" - Main workstation analysis & case viewer.
+     2) "blender"  - Blender CAD rendering & 3D model processing.
+     3) "ortho"    - Orthodontic staging and treatment plan tools.
+     4) "agliner"  - Automated tooth segmentation pipeline.
+
+D. CLEAR ALIGNER AI & CAD PIPELINE (Python + Blender)
+   - Location: ai cad/aligner_pipeline/ and blender/
+   - Pipeline Stages:
+     1) Phase 1: STL import and tooth segmentation.
+     2) Phase 2: Centroid and 6-DoF metadata extraction (extract_tooth_metadata.py).
+     3) Phase 3: Algorithmic staging plan generation (generate_staging_plan.py).
+     4) Phase 4 & 5: Automated Blender CAD generation of aligner shells 
+        with undercut removal and STL export (render_aligner_stages.py).
+
+------------------------------------------------------------------------------
+3. DEFAULT TEST CREDENTIALS
+------------------------------------------------------------------------------
+- Admin Account:
+  Username: admin
+  Password: admin123
+  Role: System Administrator (Full access)
+
+- Admin Account:
+  Username: Abg Toi
+  Password: admin123
+  Role: System Administrator (Full access)
+
+------------------------------------------------------------------------------
+4. KEY COMMANDS
+------------------------------------------------------------------------------
+- Start Server (Dev mode):  npx tsx server.ts
+- Build Frontend:          npm run build
+- Check TypeScript Types:  npx tsc --noEmit
+- Run CAD Pipeline CLI:     python aligner_pipeline/run_pipeline.py all ...
+
+==============================================================================

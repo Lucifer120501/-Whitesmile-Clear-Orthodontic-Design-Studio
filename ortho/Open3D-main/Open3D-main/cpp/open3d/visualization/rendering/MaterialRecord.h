@@ -1,0 +1,130 @@
+// ----------------------------------------------------------------------------
+// -                        Open3D: www.open3d.org                            -
+// ----------------------------------------------------------------------------
+// Copyright (c) 2018-2024 www.open3d.org
+// SPDX-License-Identifier: MIT
+// ----------------------------------------------------------------------------
+
+#pragma once
+
+#include <Eigen/Core>
+#include <string>
+#include <unordered_map>
+
+#include "open3d/geometry/Image.h"
+#include "open3d/visualization/rendering/Gradient.h"
+#include "open3d/visualization/utility/GLHelper.h"
+
+namespace open3d {
+namespace visualization {
+namespace rendering {
+
+struct MaterialRecord {
+    std::string name;
+
+    // Rendering attributes
+    bool has_alpha = false;
+
+    // PBR Material properties and maps
+    Eigen::Vector4f base_color = Eigen::Vector4f(1.f, 1.f, 1.f, 1.f);
+    float base_metallic = 0.f;
+    float base_roughness = 1.f;
+    float base_reflectance = 0.5f;
+    float base_clearcoat = 0.f;
+    float base_clearcoat_roughness = 0.f;
+    float base_anisotropy = 0.f;
+    Eigen::Vector4f emissive_color = Eigen::Vector4f(0.f, 0.f, 0.f, 1.f);
+
+    // PBR material properties for refractive materials
+    float thickness = 1.f;
+    float transmission = 1.f;
+    Eigen::Vector3f absorption_color =
+            Eigen::Vector3f(1.f, 1.f, 1.f);  // linear color
+    float absorption_distance = 1.f;
+
+    float point_size = 3.f;
+    float line_width = 1.f;  // only used with shader = "unlitLine"
+
+    std::shared_ptr<geometry::Image> albedo_img;
+    std::shared_ptr<geometry::Image> normal_img;
+    std::shared_ptr<geometry::Image> ao_img;
+    std::shared_ptr<geometry::Image> metallic_img;
+    std::shared_ptr<geometry::Image> roughness_img;
+    std::shared_ptr<geometry::Image> reflectance_img;
+    std::shared_ptr<geometry::Image> clearcoat_img;
+    std::shared_ptr<geometry::Image> clearcoat_roughness_img;
+    std::shared_ptr<geometry::Image> anisotropy_img;
+
+    // Combined images
+    std::shared_ptr<geometry::Image> ao_rough_metal_img;
+
+    // Colormap (incompatible with other settings except point_size)
+    // Values for 'value' must be in [0, 1] and the vector must be sorted
+    // by increasing value. 'shader' must be "unlitGradient".
+    std::shared_ptr<Gradient> gradient;
+    float scalar_min = 0.0f;
+    float scalar_max = 1.0f;
+
+    // Colors are assumed to be sRGB and tone-mapped accordingly.
+    // If tone-mapping is disabled, then colors would be in linear RGB space,
+    // in which case this should be set to false. If necessary, colors will be
+    // linearized on the CPU.
+    bool sRGB_color = false;
+
+    // Unlike the material property sRGB_color which is used to indicate that
+    // source colors are in sRGB colorspace, sRGB_vertex_color indicates that
+    // per-vertex colors are in sRGB space and should be passed to the GPU as
+    // sRGB color.
+    bool sRGB_vertex_color = false;
+
+    // Background image (shader = "unlitBackground")
+    float aspect_ratio = 0.0f;  // 0: uses base_color; >0: uses albedo_img
+
+    // Infinite ground plane
+    float ground_plane_axis = 0.f;  // 0: XZ; >0: XY; <0: YZ
+
+    // Max Spherical Harmonic degree for rendering gaussian splats.
+    int gaussian_splat_sh_degree = 2;
+
+    // Minimum splat alpha value when rendering gaussian splats.
+    /// Minimum alpha threshold for Gaussian splat CPU-side filtering in
+    /// PackGaussianSplatAttrsDirect().  Splats whose sigmoid(opacity) is below
+    /// this value are discarded at load time and never uploaded to the GPU,
+    /// removing the need for a redundant per-splat GPU alpha test.
+    /// Matches the composite pass kMinAlpha = 1/255.
+    float gaussian_splat_min_alpha = 1.0f / 255.0f;
+
+    // Enable anti-aliasing density compensation for gaussian splats.
+    // Multiplies each splat's opacity by sqrt(det(Sigma) / det(Sigma_blurred))
+    // to counteract the over-brightening caused by the fixed +0.3 blur kernel.
+    bool gaussian_splat_antialias = false;
+
+    // Hard per-splat cap on the number of screen tiles a single splat may
+    // cover; splats whose footprint would exceed this are culled (dropped)
+    // entirely rather than rendered from a smaller tile rectangle, which
+    // would otherwise show up as a hard-edged, wrongly-opaque block. Raise
+    // for very large / close-up splats. Decoupled from GPU memory use: only
+    // `gaussian_splat_avg_tiles_per_splat` below affects buffer sizing.
+    uint32_t gaussian_splat_max_tiles_per_splat = 256;
+
+    // Expected mean tiles-per-splat across the scene, used only to size the
+    // shared tile-entry buffers (a statistical estimate, not an enforced
+    // limit). Raise for scenes with many large/overlapping splats at the
+    // cost of higher GPU memory use; unlike max_tiles_per_splat above, this
+    // does not clip individual splats.
+    uint32_t gaussian_splat_avg_tiles_per_splat = 32;
+
+    // Total tile-coverage entry budget for the whole scene.
+    // Raise this for dense or high-resolution scenes at the cost of GPU memory.
+    uint32_t gaussian_splat_max_tile_entries_total = 32u * 1024u * 1024u;
+
+    // Generic material properties
+    std::unordered_map<std::string, Eigen::Vector4f> generic_params;
+    std::unordered_map<std::string, geometry::Image> generic_imgs;
+
+    std::string shader = "defaultUnlit";
+};
+
+}  // namespace rendering
+}  // namespace visualization
+}  // namespace open3d

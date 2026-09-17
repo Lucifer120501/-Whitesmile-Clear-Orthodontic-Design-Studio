@@ -1,0 +1,15 @@
+diff --git a/config/BUILDCONFIG.gn b/config/BUILDCONFIG.gn
+--- a/config/BUILDCONFIG.gn
++++ b/config/BUILDCONFIG.gn
+@@ -171,6 +171,11 @@ declare_args() {
+       is_debug && current_os != "ios" && current_os != "watchos"
+ }
+ 
++declare_args() {
++  # Open3D: GCC libstdc++ ABI selection on Linux.
++  rtc_use_cxx11_abi = true
++}
++
+ assert(!(is_debug && is_official_build), "Can't do official debug builds")
+ assert(!(current_os == "ios" && is_component_build),
+        "Can't use component build on iOS")

@@ -1,0 +1,42 @@
+◇ injected env (4) from .env.local // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[satellites] Agliner Segmentation starting on :5173 (proxied at http://localhost:3000/agliner)
+[satellites] Ortho Staging & Render starting on :8765 (proxied at http://localhost:3000/ortho)
+
+================================================================
+  Whitesmile Clear Orthodontic Design Studio Server Running
+================================================================
+  Local Access   : http://localhost:3001/
+  Network Access : http://100.115.78.89:3001/  (use this on 3rd party devices on LAN)
+  Network Access : http://10.10.0.55:3001/  (use this on 3rd party devices on LAN)
+  → Main System   : /
+  → Agliner Seg.  : /agliner
+  → Ortho Staging : /ortho
+================================================================
+
+[ortho] INFO:     Started server process [17300]
+[ortho] INFO:     Waiting for application startup.
+[ortho] [server] ==================================================
+[ortho] [server] Aligner Pipeline Server starting…
+[ortho] [server] Blender: C:\Program Files\Blender Foundation\Blender 5.2\blender.exe
+[ortho] [server] Work dir: L:\New folder\beta\ortho\aligner_pipeline\workspace
+[ortho] [server] Plans:    L:\New folder\beta\ortho\aligner_pipeline\workspace\plans
+[agliner] npm notice run aligner-ui@1.0.0 npx
+[agliner] npm notice run vite --port 5173 --strictPort --host 0.0.0.0
+[agliner] [31merror when starting dev server:
+[agliner] Error: Port 5173 is already in use
+[agliner]     at Server.onError (file:///L:/New%20folder/beta/ai%20cad/aligner-ui/node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js:25119:18)
+[agliner]     at Server.emit (node:events:509:28)
+[agliner]     at emitErrorNT (node:net:2045:8)
+[agliner]     at process.processTicksAndRejections (node:internal/process/task_queues:90:21)[39m
+[satellites] Agliner UI exited (code 1)
+[ortho] [server] Output:   L:\New folder\beta\storage (shared storage, per case: <storage>/<case>/stages)
+[ortho] [server] ==================================================
+[ortho] [server] [auto-detect] No reachable WhiteSmile server at http://localhost:3000
+[ortho] [server] [cleanup] No temporary cases to wipe (all finalized or none present)
+[ortho] INFO:     Application startup complete.
+[ortho] ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8765): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+[ortho] INFO:     Waiting for application shutdown.
+[ortho] [server] Server shutting down.
+[ortho] INFO:     Application shutdown complete.
+[satellites] Ortho server exited (code 3)

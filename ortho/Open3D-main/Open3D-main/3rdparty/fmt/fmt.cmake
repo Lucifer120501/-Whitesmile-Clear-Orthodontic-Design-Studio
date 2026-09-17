@@ -1,0 +1,37 @@
+include(ExternalProject)
+
+set(FMT_LIB_NAME fmt)
+
+if (MSVC)
+    set(FMT_VER "9.1.0")   # Later versions cause compiler errors with MSVC +
+    # nvcc while compiling CUDA code, since we are unable to pass the /utf-8
+    # option correctly to nvcc's host compiler.
+    set(FMT_SHA256 "5dea48d1fcddc3ec571ce2058e13910a0d4a6bab4cc09a809d8b1dd1c88ae6f2")
+else()
+    set(FMT_VER "12.1.0")
+    set(FMT_SHA256 "ea7de4299689e12b6dddd392f9896f08fb0777ac7168897a244a6d6085043fea")
+endif()
+
+ExternalProject_Add(
+    ext_fmt
+    PREFIX fmt
+    URL https://github.com/fmtlib/fmt/archive/refs/tags/${FMT_VER}.tar.gz
+    URL_HASH SHA256=${FMT_SHA256}
+    DOWNLOAD_DIR "${OPEN3D_THIRD_PARTY_DOWNLOAD_DIR}/fmt"
+    UPDATE_COMMAND ""
+    CMAKE_ARGS
+        ${ExternalProject_CMAKE_ARGS_hidden}
+        -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+        -DFMT_DOC=OFF
+        -DFMT_TEST=OFF
+        -DFMT_FUZZ=OFF
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    BUILD_BYPRODUCTS
+        <INSTALL_DIR>/${Open3D_INSTALL_LIB_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}${FMT_LIB_NAME}${CMAKE_STATIC_LIBRARY_SUFFIX}
+        <INSTALL_DIR>/${Open3D_INSTALL_LIB_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}${FMT_LIB_NAME}d${CMAKE_STATIC_LIBRARY_SUFFIX}
+)
+
+ExternalProject_Get_Property(ext_fmt INSTALL_DIR)
+set(FMT_INCLUDE_DIRS ${INSTALL_DIR}/include/) # "/" is critical.
+set(FMT_LIB_DIR ${INSTALL_DIR}/${Open3D_INSTALL_LIB_DIR})
+set(FMT_LIBRARIES ${FMT_LIB_NAME}$<$<PLATFORM_ID:Windows>:$<$<CONFIG:Debug>:d>>)

@@ -1,0 +1,134 @@
+{
+  "patient_id": "",
+  "case_name": "api_test",
+  "description": "Heuristic: default",
+  "tooth_numbers": [
+    11,
+    12,
+    13,
+    14,
+    21,
+    22
+  ],
+  "movements": {
+    "11": {
+      "tooth_number": 11,
+      "tx": 0.5,
+      "ty": 0.1,
+      "tz": 0.2,
+      "rx": 0.0,
+      "ry": 1.0,
+      "rz": 0.3,
+      "tip": null,
+      "torque": null,
+      "rotation": null,
+      "attachment_type": null,
+      "attachment_size": [
+        2.0,
+        2.0,
+        1.5
+      ]
+    },
+    "12": {
+      "tooth_number": 12,
+      "tx": 0.5,
+      "ty": 0.1,
+      "tz": 0.2,
+      "rx": 0.0,
+      "ry": 1.0,
+      "rz": 0.3,
+      "tip": null,
+      "torque": null,
+      "rotation": null,
+      "attachment_type": null,
+      "attachment_size": [
+        2.0,
+        2.0,
+        1.5
+      ]
+    },
+    "13": {
+      "tooth_number": 13,
+      "tx": 0.5,
+      "ty": 0.1,
+      "tz": 0.2,
+      "rx": 0.0,
+      "ry": 1.0,
+      "rz": 0.3,
+      "tip": null,
+      "torque": null,
+      "rotation": null,
+      "attachment_type": null,
+      "attachment_size": [
+        2.0,
+        2.0,
+        1.5
+      ]
+    },
+    "14": {
+      "tooth_number": 14,
+      "tx": 0.3,
+      "ty": 0.0,
+      "tz": 0.1,
+      "rx": 0.0,
+      "ry": 0.5,
+      "rz": 0.0,
+      "tip": null,
+      "torque": null,
+      "rotation": null,
+      "attachment_type": null,
+      "attachment_size": [
+        2.0,
+        2.0,
+        1.5
+      ]
+    },
+    "21": {
+      "tooth_number": 21,
+      "tx": 0.5,
+      "ty": 0.1,
+      "tz": 0.2,
+      "rx": 0.0,
+      "ry": 1.0,
+      "rz": 0.3,
+      "tip": null,
+      "torque": null,
+      "rotation": null,
+      "attachment_type": null,
+      "attachment_size": [
+        2.0,
+        2.0,
+        1.5
+      ]
+    },
+    "22": {
+      "tooth_number": 22,
+      "tx": 0.5,
+      "ty": 0.1,
+      "tz": 0.2,
+      "rx": 0.0,
+      "ry": 1.0,
+      "rz": 0.3,
+      "tip": null,
+      "torque": null,
+      "rotation": null,
+      "attachment_type": null,
+      "attachment_size": [
+        2.0,
+        2.0,
+        1.5
+      ]
+    }
+  },
+  "num_stages": 20,
+  "shell_thickness_mm": 0.75,
+  "offset_mm": 0.1,
+  "undercut_block_angle": 45.0,
+  "gingiva_margin_mm": 1.0,
+  "attachments_enabled": true,
+  "stl_dir": "C:\\Users\\VSV014\\Desktop\\ortho\\segmented_stls",
+  "output_dir": "C:\\Users\\VSV014\\Desktop\\ortho\\workspace\\output\\api_test",
+  "blender_exe": "",
+  "created_by": "aligner_pipeline",
+  "created_date": ""
+}
